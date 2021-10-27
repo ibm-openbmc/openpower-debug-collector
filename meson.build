@@ -21,6 +21,14 @@ if sdbusplus_dep.type_name() == 'internal'
     sdbusplusplus_depfiles = subproject('sdbusplus').get_variable('sdbusplusplus_depfiles')
 endif
 
+cxx = meson.get_compiler('cpp')
+
+if cxx.has_header('CLI/CLI.hpp')
+    CLI11_dep = declare_dependency()
+else
+    CLI11_dep = dependency('CLI11')
+endif
+
 phosphorlogging = dependency(
     'phosphor-logging',
     fallback: [

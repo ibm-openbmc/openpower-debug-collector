@@ -6,14 +6,9 @@
 #include <map>
 #include <string>
 #include <variant>
-namespace openpower
-{
-namespace dump
-{
-namespace util
-{
 
-constexpr auto SBE_DUMP_TIMEOUT = 4 * 60; // Timeout in seconds
+namespace openpower::dump::util
+{
 
 using DumpCreateParams =
     std::map<std::string, std::variant<std::string, uint64_t>>;
@@ -87,19 +82,4 @@ void setProperty(const std::string& interface, const std::string& propertyName,
     auto reply = bus.call(method);
 }
 
-/**
- * Request SBE dump from the dump manager
- *
- * Request SBE dump from the dump manager and register a monitor for observing
- * the dump progress.
- *
- * @param failingUnit The id of the proc containing failed SBE
- * @param eid Error log id associated with dump
- * @param isOcmb if true collect dump from OCMB SBE
- */
-void requestSBEDump(const uint32_t failingUnit, const uint32_t eid,
-                    bool isOcmb = false);
-
-} // namespace util
-} // namespace dump
-} // namespace openpower
+} // namespace openpower::dump::util
