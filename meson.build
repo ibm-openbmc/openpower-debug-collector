@@ -29,6 +29,27 @@ phosphorlogging = dependency(
     ]
 )
 
+phosphor_dbus_interfaces_dep = dependency(
+    'phosphor-dbus-interfaces',
+    fallback: [
+        'phosphor-dbus-interfaces',
+        'phosphor_dbus_interfaces_dep'
+    ],
+)
+
+fmt_dep = dependency('fmt', required: false)
+if not fmt_dep.found()
+  fmt_proj = import('cmake').subproject(
+    'fmt',
+    cmake_options: [
+      '-DCMAKE_POSITION_INDEPENDENT_CODE=ON',
+      '-DMASTER_PROJECT=OFF'
+    ],
+    required: false)
+  assert(fmt_proj.found(), 'fmtlib is required')
+  fmt_dep = fmt_proj.dependency('fmt')
+endif
+
 realpath_prog = find_program('realpath')
 
 selected_subdirs = []
@@ -92,6 +113,15 @@ deps = [
     extra_deps
 ]
 
+# list of unit files, the path as input and service name
+# as output
+# eg: unit_file += {'input:'<path>, 'output':<service name>}
+unit_files = []
+
+if get_option('dump-collection').enabled()
+    subdir('dump')
+endif
+
 executable('watchdog_timeout',
     'watchdog_timeout.cpp',
     generated_sources,
@@ -110,3 +140,17 @@ executable('checkstop_app',
     implicit_include_directories: true,
     install: true
 )
+
+unit_subs = configuration_data()
+unit_subs.set('bindir', join_paths(get_option('prefix'), get_option('bindir')))
+systemd_system_unit_dir = dependency('systemd').get_variable(
+    pkgconfig: 'systemdsystemunitdir')
+foreach u : unit_files
+    configure_file(
+        configuration: unit_subs,
+        input: u.get('input'),
+        install: true,
+        install_dir: systemd_system_unit_dir,
+        output: u.get('output')
+    )
+endforeach
