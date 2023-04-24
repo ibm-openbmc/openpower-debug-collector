@@ -37,6 +37,7 @@ int main(int argc, char* argv[])
     CLI11_PARSE(app, argc, argv);
 
 #ifdef WATCHDOG_DUMP_COLLECTION
+if
     using namespace phosphor::logging;
     using namespace watchdog::dump;
 
@@ -92,6 +93,7 @@ int main(int argc, char* argv[])
     }
 
 #else
+else
     using namespace phosphor::logging;
     using error =
         sdbusplus::org::open_power::Host::Boot::Error::WatchdogTimedOut;
