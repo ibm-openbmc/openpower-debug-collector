@@ -104,6 +104,8 @@ else
     extra_deps = []
 endif
 
+configure_file(output: 'config.h', configuration: conf_data)
+
 deps = [
     systemd,
     sdbusplus_dep,
@@ -123,7 +125,6 @@ endif
 
 executable('watchdog_timeout',
     'watchdog_timeout.cpp',
-    configure_file(output: 'config.h', configuration: conf_data),
     generated_sources,
     dependencies: deps,
     link_with: watchdog_lib,
