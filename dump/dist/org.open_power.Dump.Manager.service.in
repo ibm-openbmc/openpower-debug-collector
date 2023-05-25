@@ -1,5 +1,5 @@
 [Unit]
-Description=OpenPOWER Dump Manager Host 
+Description=OpenPOWER Dump Manager Host
 Wants=obmc-host-start-pre@0.target
 Before=obmc-host-start-pre@0.target
 Wants=xyz.openbmc_project.Dump.Manager.service
@@ -15,4 +15,4 @@ Type=dbus
 BusName=org.open_power.Dump.Manager
 
 [Install]
-WantedBy=obmc-host-startmin@0.target
+#WantedBy=obmc-host-startmin@0.target
