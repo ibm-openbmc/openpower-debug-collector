@@ -1,19 +1,22 @@
+# Readme
+
 ## Building the Code
 
-```
+```bash
 To build this package, do the following steps:
 
     1. meson build
     2. ninja -C build
 
 To clean the repository run `rm -rf build`.
+
 ```
 
 ## Hostboot dump collection interface
 
 The host dump collection interface can be invoked in the following way
 
-```
+```bash
 busctl --verbose call org.open_power.Dump.Manager
        /org/openpower/dump xyz.openbmc_project.Dump.Create
        CreateDump a{sv} 2
@@ -26,7 +29,7 @@ busctl --verbose call org.open_power.Dump.Manager
 
 The hardware dump collection interface can be invoked in the following way
 
-```
+```bash
 busctl --verbose call org.open_power.Dump.Manager
        /org/openpower/dump xyz.openbmc_project.Dump.Create
        CreateDump a{sv} 3

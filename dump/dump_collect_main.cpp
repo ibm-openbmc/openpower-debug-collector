@@ -21,7 +21,7 @@ int main(int argc, char** argv)
     auto options = openpower::dump::util::ArgumentParser(argc, argv);
 
     // Parse arguments
-    auto typeStr = std::move((options)["type"]);
+    auto typeStr = (options)["type"];
     if (typeStr.empty())
     {
         ExitWithError("type not specified", argv);
@@ -36,20 +36,20 @@ int main(int argc, char** argv)
         ExitWithError("type specified is invalid.", argv);
     }
 
-    auto idStr = std::move((options)["id"]);
+    auto idStr = (options)["id"];
     if (idStr.empty())
     {
         ExitWithError("Dump id is not provided", argv);
     }
     auto id = std::stoi(idStr);
 
-    auto path = std::move((options)["path"]);
+    auto path = (options)["path"];
     if (path.empty())
     {
         ExitWithError("Collection path not specified.", argv);
     }
 
-    auto failingUnitStr = std::move((options)["failingunit"]);
+    auto failingUnitStr = (options)["failingunit"];
     auto failingUnit = std::stoi(failingUnitStr);
     try
     {
