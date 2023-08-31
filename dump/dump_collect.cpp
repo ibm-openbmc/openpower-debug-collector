@@ -246,10 +246,14 @@ void collectDump(const uint8_t type, const uint32_t id,
                 if (errType == openpower::phal::exception::SBE_CMD_FAILED)
                 {
                     log<level::ERR>(
-                        fmt::format("Stop instructions failed, "
-                                    " on proc({}) error({}) error type({}), a "
-                                    "PELL will be logged",
-                                    index, sbeError.what(), errType)
+                        fmt::format(
+                            "Stop instructions failed, "
+                            " on proc({}) error({}) error type({}), a "
+                            "PELL will be logged",
+                            index, sbeError.what(),
+                            static_cast<
+                                std::underlying_type_t<decltype(errType)>>(
+                                errType))
                             .c_str());
                     uint32_t cmd = SBEFIFO_CMD_CLASS_INSTRUCTION |
                                    SBEFIFO_CMD_CONTROL_INSN;
@@ -269,9 +273,13 @@ void collectDump(const uint8_t type, const uint32_t id,
                 else
                 {
                     log<level::INFO>(
-                        fmt::format("Stop instructions failed, "
-                                    " on proc({}) error({}) error type({})",
-                                    index, sbeError.what(), errType)
+                        fmt::format(
+                            "Stop instructions failed, "
+                            " on proc({}) error({}) error type({})",
+                            index, sbeError.what(),
+                            static_cast<
+                                std::underlying_type_t<decltype(errType)>>(
+                                errType))
                             .c_str());
                 }
             }
