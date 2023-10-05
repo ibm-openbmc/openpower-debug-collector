@@ -154,7 +154,8 @@ void collectDumpFromSBE(struct pdbg_target* proc,
         std::string event = "org.open_power.Processor.Error.SbeChipOpFailure";
         auto dumpIsRequired = false;
 
-        if (sbeError.errType() == openpower::phal::exception::SBE_CMD_TIMEOUT)
+        if (sbeError.errType() == openpower::phal::exception::SBE_CMD_TIMEOUT ||
+            sbeError.errType() == openpower::phal::exception::SBE_EXTRACT_RC)
         {
             event = "org.open_power.Processor.Error.SbeChipOpTimeout";
             dumpIsRequired = true;

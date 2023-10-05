@@ -100,7 +100,8 @@ void handleSbeBootError(struct pdbg_target* procTarget, const uint32_t timeout)
     // event type
     std::string event;
     if ((sbeError.errType() == exception::SBE_FFDC_NO_DATA) ||
-        (sbeError.errType() == exception::SBE_CMD_TIMEOUT) || (dumpIsRequired))
+        (sbeError.errType() == exception::SBE_CMD_TIMEOUT) ||
+        (sbeError.errType() == exception::SBE_EXTRACT_RC) || (dumpIsRequired))
     {
         log<level::INFO>("No FFDC data");
         event = "org.open_power.Processor.Error.SbeBootTimeout";
