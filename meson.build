@@ -1,11 +1,11 @@
 project(
     'openpower-debug-collector',
     'cpp',
-    meson_version: '>=1.1.1',
+    meson_version: '>=1.0.0',
     default_options: [
         'warning_level=3',
         'werror=true',
-        'cpp_std=c++23'
+        'cpp_std=c++20'
     ],
     license: 'Apache-2.0',
     version: '1.0.0',
