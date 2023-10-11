@@ -67,7 +67,7 @@ void triggerSystemDump()
     catch (const sdbusplus::exception::SdBusError& e)
     {
         log<level::ERR>(
-            std::format("triggerMPIPLDump:: D-Bus call exception, errorMsg({})",
+            fmt::format("triggerMPIPLDump:: D-Bus call exception, errorMsg({})",
                         e.what())
                 .c_str());
     }
