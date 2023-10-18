@@ -31,7 +31,8 @@ constexpr auto SBEFIFO_CMD_CONTROL_INSN = 0x01;
 
 void writeDumpFile(const std::filesystem::path& path, const uint32_t id,
                    const uint8_t clockState, const uint8_t chipPos,
-                   util::DumpDataPtr& dataPtr, const uint32_t len)
+                   util::DumpDataPtr& dataPtr, const uint32_t len,
+                   const uint32_t pelIDForChipOpFailure)
 {
     using namespace phosphor::logging;
     using namespace sdbusplus::xyz::openbmc_project::Common::Error;
@@ -68,7 +69,21 @@ void writeDumpFile(const std::filesystem::path& path, const uint32_t id,
                        std::ifstream::eofbit);
     try
     {
-        outfile.write(reinterpret_cast<char*>(dataPtr.getData()), len);
+        if (pelIDForChipOpFailure != 0)
+        {
+            std::string errLogID = "ELog ID: ";
+            std::stringstream ss;
+            ss << std::setw(8) << std::setfill('0') << pelIDForChipOpFailure;
+            errLogID += ss.str();
+            std::string metadata(reinterpret_cast<char*>(dataPtr.getData()));
+            metadata += errLogID;
+            uint32_t totalLen = len + static_cast<uint32_t>(errLogID.length());
+            outfile.write(metadata.c_str(), totalLen);
+        }
+        else
+        {
+            outfile.write(reinterpret_cast<char*>(dataPtr.getData()), len);
+        }
     }
     catch (std::ofstream::failure& oe)
     {
@@ -90,7 +105,8 @@ void writeDumpFile(const std::filesystem::path& path, const uint32_t id,
 void collectDumpFromSBE(struct pdbg_target* proc,
                         const std::filesystem::path& path, const uint32_t id,
                         const uint8_t type, const uint8_t clockState,
-                        const uint64_t failingUnit)
+                        const uint64_t failingUnit,
+                        const uint32_t pelIDForChipOpFailure)
 {
     using namespace phosphor::logging;
     auto chipPos = pdbg_target_index(proc);
@@ -193,7 +209,8 @@ void collectDumpFromSBE(struct pdbg_target* proc,
         }
         return;
     }
-    writeDumpFile(path, id, clockState, chipPos, dataPtr, len);
+    writeDumpFile(path, id, clockState, chipPos, dataPtr, len,
+                  pelIDForChipOpFailure);
 }
 
 void collectDump(const uint8_t type, const uint32_t id,
@@ -211,6 +228,7 @@ void collectDump(const uint8_t type, const uint32_t id,
     openpower::phal::pdbg::init();
 
     std::vector<struct pdbg_target*> procList;
+    uint32_t pelIDForChipOpFailure = 0;
 
     pdbg_for_each_class_target("proc", target)
     {
@@ -265,10 +283,11 @@ void collectDump(const uint8_t type, const uint32_t id,
                         "SRC6", std::to_string((index << 16) | cmd));
 
                     // Create error log.
-                    openpower::dump::pel::createSbeErrorPEL(
-                        "org.open_power.Processor.Error.SbeChipOpFailure",
-                        sbeError, pelAdditionalData,
-                        openpower::dump::pel::Severity::Informational);
+                    pelIDForChipOpFailure =
+                        openpower::dump::pel::createSbeErrorPEL(
+                            "org.open_power.Processor.Error.SbeChipOpFailure",
+                            sbeError, pelAdditionalData,
+                            openpower::dump::pel::Severity::Informational);
                 }
                 else
                 {
@@ -314,7 +333,7 @@ void collectDump(const uint8_t type, const uint32_t id,
                 try
                 {
                     collectDumpFromSBE(procTarget, path, id, type, cstate,
-                                       failingUnit);
+                                       failingUnit, pelIDForChipOpFailure);
                 }
                 catch (const std::runtime_error& error)
                 {

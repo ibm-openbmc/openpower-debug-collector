@@ -18,10 +18,13 @@ namespace sbe_chipop
  *  @param chipPos - Chip position of the failing unit
  *  @param dataPtr - Content to write to file
  *  @param len - Length of the content
+ *  @param[in] pelIDForChipOpFailure - PEL ID if there is any chip op failure
+ * while collecting dump
  */
 void writeDumpFile(const std::filesystem::path& path, const uint32_t id,
                    const uint8_t clockState, const uint8_t chipPos,
-                   util::DumpDataPtr& dataPtr, const uint32_t len);
+                   util::DumpDataPtr& dataPtr, const uint32_t len,
+                   const uint32_t pelIDForChipOpFailure);
 
 /** @brief The function to orchestrate dump collection from different
  *  SBEs
@@ -42,11 +45,14 @@ void collectDump(const uint8_t type, const uint32_t id,
  *  @param[in] clockState - State of the clock while collecting.
  *  @param[in] chipPos - Position of the chip
  *  @param[in] failingUnit - Chip position of the failing unit
+ *  @param[in] pelIDForChipOpFailure - PEL ID if there is any chip op failure
+ * while collecting dump
  */
 void collectDumpFromSBE(struct pdbg_target* proc,
                         const std::filesystem::path& path, const uint32_t id,
                         const uint8_t type, const uint8_t clockState,
-                        const uint8_t chipPos, const uint64_t failingUnit);
+                        const uint8_t chipPos, const uint64_t failingUnit,
+                        const uint32_t pelIDForChipOpFailure);
 
 } // namespace sbe_chipop
 } // namespace dump
