@@ -5,8 +5,6 @@
 #include "dump_utils.hpp"
 #include "sbe_consts.hpp"
 
-#include <fmt/core.h>
-
 #include <phosphor-logging/elog-errors.hpp>
 #include <phosphor-logging/elog.hpp>
 #include <phosphor-logging/log.hpp>
@@ -14,6 +12,8 @@
 #include <sdeventplus/source/base.hpp>
 #include <xyz/openbmc_project/Common/error.hpp>
 #include <xyz/openbmc_project/Dump/Create/error.hpp>
+
+#include <format>
 
 namespace openpower
 {
@@ -44,7 +44,7 @@ sdbusplus::message::object_path
     sdbusplus::message::object_path newDumpPath;
     auto dumpPath = extractDumpPath(createParams);
     log<level::INFO>(
-        fmt::format("Request to collect dump({})", dumpPath).c_str());
+        std::format("Request to collect dump({})", dumpPath).c_str());
     try
     {
         // Pass empty create parameters since no additional parameters
@@ -59,7 +59,7 @@ sdbusplus::message::object_path
     catch (const sdbusplus::exception::SdBusError& e)
     {
         log<level::ERR>(
-            fmt::format("D-Bus call exception, errorMsg({})", e.what())
+            std::format("D-Bus call exception, errorMsg({})", e.what())
                 .c_str());
         if (e.name() == ERROR_DUMP_DISABLED)
         {
@@ -90,7 +90,7 @@ sdbusplus::message::object_path
     catch (const std::exception& e)
     {
         log<level::ERR>(
-            fmt::format("Failed to get dump id,invalid dump entry path({})",
+            std::format("Failed to get dump id,invalid dump entry path({})",
                         std::string(newDumpPath))
                 .c_str());
         throw;
@@ -132,7 +132,7 @@ std::string Manager::extractDumpPath(DumpCreateParams& params)
     if (dumpTypeIter == dumpTypeMap.end())
     {
         log<level::ERR>(
-            fmt::format("Invalid dump type passed dumpType({}) error",
+            std::format("Invalid dump type passed dumpType({}) error",
                         dumpTypeStr)
                 .c_str());
         elog<InvalidArgument>(Argument::ARGUMENT_NAME("DUMP_TYPE"),
