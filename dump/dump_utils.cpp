@@ -1,12 +1,11 @@
 #include "dump_utils.hpp"
 
-#include <fmt/core.h>
-
 #include <phosphor-logging/elog-errors.hpp>
 #include <phosphor-logging/elog.hpp>
 #include <phosphor-logging/log.hpp>
 #include <xyz/openbmc_project/Common/File/error.hpp>
 
+#include <format>
 #include <fstream>
 #include <string>
 
@@ -46,7 +45,7 @@ uint32_t dumpStatusChanged(sdbusplus::message::message& msg,
                                     "OperationStatus.InProgress" != *status))
         {
             // dump is done, trace some info and change in progress flag
-            log<level::INFO>(fmt::format("Dump status({}) : path={}",
+            log<level::INFO>(std::format("Dump status({}) : path={}",
                                          status->c_str(), path.c_str())
                                  .c_str());
             inProgress = false;
@@ -103,7 +102,7 @@ void monitorDump(const std::string& path, const uint32_t timeout)
 
 void requestSBEDump(const uint32_t failingUnit, const uint32_t eid)
 {
-    log<level::INFO>(fmt::format("Requesting Dump PEL({}) chip position({})",
+    log<level::INFO>(std::format("Requesting Dump PEL({}) chip position({})",
                                  eid, failingUnit)
                          .c_str());
 
@@ -142,7 +141,7 @@ void requestSBEDump(const uint32_t failingUnit, const uint32_t eid)
     }
     catch (const sdbusplus::exception::exception& e)
     {
-        log<level::ERR>(fmt::format("D-Bus call createDump exception",
+        log<level::ERR>(std::format("D-Bus call createDump exception",
                                     "OBJPATH={}, INTERFACE={}, EXCEPTION={}",
                                     path, interface, e.what())
                             .c_str());
@@ -152,7 +151,7 @@ void requestSBEDump(const uint32_t failingUnit, const uint32_t eid)
         {
             // Dump is disabled, Skip the dump collection.
             log<level::INFO>(
-                fmt::format("Dump is disabled on({}), skipping dump collection",
+                std::format("Dump is disabled on({}), skipping dump collection",
                             failingUnit)
                     .c_str());
         }
@@ -188,7 +187,7 @@ std::string getService(sdbusplus::bus::bus& bus, const std::string& intf,
 
         if (mapperResponse.empty())
         {
-            log<level::ERR>(fmt::format("Empty mapper response for GetObject "
+            log<level::ERR>(std::format("Empty mapper response for GetObject "
                                         "interface({}), path({})",
                                         intf, path)
                                 .c_str());
@@ -198,7 +197,7 @@ std::string getService(sdbusplus::bus::bus& bus, const std::string& intf,
     }
     catch (const sdbusplus::exception::exception& ex)
     {
-        log<level::ERR>(fmt::format("Mapper call failed for GetObject "
+        log<level::ERR>(std::format("Mapper call failed for GetObject "
                                     "errorMsg({}), path({}), interface({}) ",
                                     ex.what(), path, intf)
                             .c_str());

@@ -16,13 +16,14 @@ extern "C"
 #include <watchdog/watchdog_dbus.hpp>
 #include <watchdog/watchdog_main.hpp>
 
-#include <format>
 #else
 #include "org/open_power/Host/Boot/error.hpp"
 #include "phosphor-logging/elog-errors.hpp"
 
 #include <phosphor-logging/elog.hpp>
 #endif
+
+#include <format>
 
 int main(int argc, char* argv[])
 {

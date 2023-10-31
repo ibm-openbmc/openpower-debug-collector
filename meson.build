@@ -1,11 +1,11 @@
 project(
     'openpower-debug-collector',
     'cpp',
-    meson_version: '>=1.1.1',
+    meson_version: '>=1.0.0',
     default_options: [
         'warning_level=3',
         'werror=true',
-        'cpp_std=c++23'
+        'cpp_std=c++20'
     ],
     license: 'Apache-2.0',
     version: '1.0.0',
@@ -36,19 +36,6 @@ phosphor_dbus_interfaces_dep = dependency(
         'phosphor_dbus_interfaces_dep'
     ],
 )
-
-fmt_dep = dependency('fmt', required: false)
-if not fmt_dep.found()
-  fmt_proj = import('cmake').subproject(
-    'fmt',
-    cmake_options: [
-      '-DCMAKE_POSITION_INDEPENDENT_CODE=ON',
-      '-DMASTER_PROJECT=OFF'
-    ],
-    required: false)
-  assert(fmt_proj.found(), 'fmtlib is required')
-  fmt_dep = fmt_proj.dependency('fmt')
-endif
 
 realpath_prog = find_program('realpath')
 

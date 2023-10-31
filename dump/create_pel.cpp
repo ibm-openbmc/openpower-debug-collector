@@ -3,7 +3,6 @@
 #include "dump_utils.hpp"
 
 #include <fcntl.h>
-#include <fmt/format.h>
 #include <libekb.H>
 #include <unistd.h>
 
@@ -15,6 +14,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <format>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -94,7 +94,7 @@ uint32_t createSbeErrorPEL(const std::string& event, const sbeError_t& sbeError,
     }
     catch (const sdbusplus::exception::exception& e)
     {
-        log<level::ERR>(fmt::format("D-Bus call exception",
+        log<level::ERR>(std::format("D-Bus call exception",
                                     "OBJPATH={}, INTERFACE={}, EXCEPTION={}",
                                     loggingObjectPath, loggingInterface,
                                     e.what())
@@ -139,7 +139,7 @@ void FFDCFile::createCalloutFile()
 
     if (fileFD == -1)
     {
-        log<level::ERR>(fmt::format("Failed to create phalPELCallouts "
+        log<level::ERR>(std::format("Failed to create phalPELCallouts "
                                     "file({}), errorno({}) and errormsg({})",
                                     calloutFile, errno, strerror(errno))
                             .c_str());
@@ -153,7 +153,7 @@ void FFDCFile::writeCalloutData()
 
     if (rc == -1)
     {
-        log<level::ERR>(fmt::format("Failed to write phaPELCallout info "
+        log<level::ERR>(std::format("Failed to write phaPELCallout info "
                                     "in file({}), errorno({}), errormsg({})",
                                     calloutFile, errno, strerror(errno))
                             .c_str());
@@ -161,7 +161,7 @@ void FFDCFile::writeCalloutData()
     }
     else if (rc != static_cast<ssize_t>(calloutData.size()))
     {
-        log<level::WARNING>(fmt::format("Could not write all phal callout "
+        log<level::WARNING>(std::format("Could not write all phal callout "
                                         "info in file({}), written byte({}) "
                                         "and total byte({})",
                                         calloutFile, rc, calloutData.size())
@@ -175,7 +175,7 @@ void FFDCFile::setCalloutFileSeekPos()
 
     if (rc == -1)
     {
-        log<level::ERR>(fmt::format("Failed to set SEEK_SET for "
+        log<level::ERR>(std::format("Failed to set SEEK_SET for "
                                     "phalPELCallouts in file({}), errorno({}) "
                                     "and errormsg({})",
                                     calloutFile, errno, strerror(errno))

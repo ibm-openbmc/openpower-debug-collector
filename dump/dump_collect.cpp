@@ -6,7 +6,6 @@ extern "C"
 #include "create_pel.hpp"
 #include "dump_collect.hpp"
 
-#include <fmt/core.h>
 #include <libphal.H>
 #include <phal_exception.H>
 
@@ -18,6 +17,7 @@ extern "C"
 
 #include <cstdint>
 #include <filesystem>
+#include <format>
 #include <fstream>
 
 namespace openpower
@@ -55,7 +55,7 @@ void writeDumpFile(const std::filesystem::path& path, const uint32_t id,
         // Unable to open the file for writing
         auto err = errno;
         log<level::ERR>(
-            fmt::format(
+            std::format(
                 "Error opening file to write dump, errno({}), filepath({})",
                 err, dumpPath.string())
                 .c_str());
@@ -74,7 +74,7 @@ void writeDumpFile(const std::filesystem::path& path, const uint32_t id,
     {
         using namespace sdbusplus::xyz::openbmc_project::Common::File::Error;
         using metadata = xyz::openbmc_project::Common::File::Write;
-        log<level::ERR>(fmt::format("Failed to write to dump file, "
+        log<level::ERR>(std::format("Failed to write to dump file, "
                                     "errorMsg({}), error({}), filepath({})",
                                     oe.what(), oe.code().value(),
                                     dumpPath.string())
@@ -94,7 +94,7 @@ void collectDumpFromSBE(struct pdbg_target* proc,
 {
     using namespace phosphor::logging;
     auto chipPos = pdbg_target_index(proc);
-    log<level::INFO>(fmt::format("Collect dump from proc({}) path({}) id({}) "
+    log<level::INFO>(std::format("Collect dump from proc({}) path({}) id({}) "
                                  "type({}) clock({}) failingUnit({})",
                                  chipPos, path.string(), id, type, clockState,
                                  failingUnit)
@@ -120,7 +120,7 @@ void collectDumpFromSBE(struct pdbg_target* proc,
     catch (const std::exception& e)
     {
         log<level::ERR>(
-            fmt::format("Error checking for primary proc error({})", e.what())
+            std::format("Error checking for primary proc error({})", e.what())
                 .c_str());
         // Attempt to collect the dump
     }
@@ -137,7 +137,7 @@ void collectDumpFromSBE(struct pdbg_target* proc,
         {
             // SBE is not ready to accept chip-ops,
             // Skip the request, no additional error handling required.
-            log<level::INFO>(fmt::format("Collect dump: Skipping ({}) dump({}) "
+            log<level::INFO>(std::format("Collect dump: Skipping ({}) dump({}) "
                                          "on proc({}) clock state({})",
                                          sbeError.what(), type, chipPos,
                                          clockState)
@@ -145,7 +145,7 @@ void collectDumpFromSBE(struct pdbg_target* proc,
             return;
         }
         log<level::ERR>(
-            fmt::format(
+            std::format(
                 "Error in collecting dump dump type({}), clockstate({}), proc "
                 "position({}), collectFastArray({}) error({})",
                 type, clockState, chipPos, collectFastArray, sbeError.what())
@@ -179,7 +179,7 @@ void collectDumpFromSBE(struct pdbg_target* proc,
             catch (const std::exception& e)
             {
                 log<level::ERR>(
-                    fmt::format("SBE Dump request failed, proc({}) error({})",
+                    std::format("SBE Dump request failed, proc({}) error({})",
                                 chipPos, e.what())
                         .c_str());
             }
@@ -201,7 +201,7 @@ void collectDump(const uint8_t type, const uint32_t id,
 {
     using namespace phosphor::logging;
     log<level::INFO>(
-        fmt::format(
+        std::format(
             "Dump collection started type({}) id({}) failingUnit({}), path({})",
             type, id, failingUnit, path.string())
             .c_str());
@@ -225,7 +225,7 @@ void collectDump(const uint8_t type, const uint32_t id,
             {
                 // Primary processor is not functional
                 log<level::INFO>(
-                    fmt::format("Primary Processor({}) is not functional",
+                    std::format("Primary Processor({}) is not functional",
                                 index)
                         .c_str());
             }
@@ -246,7 +246,7 @@ void collectDump(const uint8_t type, const uint32_t id,
                 if (errType == openpower::phal::exception::SBE_CMD_FAILED)
                 {
                     log<level::ERR>(
-                        fmt::format(
+                        std::format(
                             "Stop instructions failed, "
                             " on proc({}) error({}) error type({}), a "
                             "PELL will be logged",
@@ -273,7 +273,7 @@ void collectDump(const uint8_t type, const uint32_t id,
                 else
                 {
                     log<level::INFO>(
-                        fmt::format(
+                        std::format(
                             "Stop instructions failed, "
                             " on proc({}) error({}) error type({})",
                             index, sbeError.what(),
@@ -319,7 +319,7 @@ void collectDump(const uint8_t type, const uint32_t id,
                 catch (const std::runtime_error& error)
                 {
                     log<level::ERR>(
-                        fmt::format(
+                        std::format(
                             "Failed to execute collection, errorMsg({})",
                             error.what())
                             .c_str());
@@ -339,7 +339,7 @@ void collectDump(const uint8_t type, const uint32_t id,
             if (WEXITSTATUS(status))
             {
                 log<level::ERR>(
-                    fmt::format("Dump collection failed, status({}) pid({})",
+                    std::format("Dump collection failed, status({}) pid({})",
                                 status, p)
                         .c_str());
                 failed = true;
@@ -353,7 +353,7 @@ void collectDump(const uint8_t type, const uint32_t id,
             std::exit(EXIT_FAILURE);
         }
         log<level::INFO>(
-            fmt::format("Dump collection completed for clock_state({})", cstate)
+            std::format("Dump collection completed for clock_state({})", cstate)
                 .c_str());
     }
 }

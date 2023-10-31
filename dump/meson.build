@@ -10,12 +10,10 @@ dump_deps = [
     sdbusplus_dep,
     phosphor_dbus_interfaces_dep,
     sdeventplus_dep,
-    fmt_dep,
     phosphorlogging,
 ]
 
 collect_deps = [
-   fmt_dep,
    phosphorlogging,
    cxx.find_library('pdbg'),
    cxx.find_library('libdt-api'),
