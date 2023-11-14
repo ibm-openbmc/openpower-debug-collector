@@ -200,6 +200,11 @@ void collectDump(const uint8_t type, const uint32_t id,
             continue;
         }
 
+        if (!openpower::phal::pdbg::isTgtPresent(target))
+        {
+            continue;
+        }
+
         // if the dump type is hostboot then call stop instructions
         if ((type == openpower::dump::SBE::SBE_DUMP_TYPE_HOSTBOOT) &&
             openpower::phal::pdbg::isTgtFunctional(target))
