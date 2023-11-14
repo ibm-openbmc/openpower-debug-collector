@@ -112,6 +112,19 @@ void collectDumpFromSBE(struct pdbg_target* proc,
         }
     }
 
+    auto primaryProc = false;
+    try
+    {
+        primaryProc = openpower::phal::pdbg::isPrimaryProc(proc);
+    }
+    catch (const std::exception& e)
+    {
+        log<level::ERR>(
+            fmt::format("Error checking for primary proc error({})", e.what())
+                .c_str());
+        // Attempt to collect the dump
+    }
+
     try
     {
         openpower::phal::sbe::getDump(proc, type, clockState, collectFastArray,
@@ -171,6 +184,13 @@ void collectDumpFromSBE(struct pdbg_target* proc,
                         .c_str());
             }
         }
+
+        if ((primaryProc) && (type == SBE::SBE_DUMP_TYPE_HOSTBOOT))
+        {
+            log<level::ERR>("Hostboot dump collection failed on primary, "
+                            "aborting colllection");
+            throw;
+        }
         return;
     }
     writeDumpFile(path, id, clockState, chipPos, dataPtr, len);
@@ -199,10 +219,21 @@ void collectDump(const uint8_t type, const uint32_t id,
         {
             continue;
         }
+        if (!openpower::phal::pdbg::isTgtFunctional(target))
+        {
+            if (openpower::phal::pdbg::isPrimaryProc(target))
+            {
+                // Primary processor is not functional
+                log<level::INFO>(
+                    fmt::format("Primary Processor({}) is not functional",
+                                index)
+                        .c_str());
+            }
+            continue;
+        }
 
         // if the dump type is hostboot then call stop instructions
-        if ((type == openpower::dump::SBE::SBE_DUMP_TYPE_HOSTBOOT) &&
-            openpower::phal::pdbg::isTgtFunctional(target))
+        if (type == openpower::dump::SBE::SBE_DUMP_TYPE_HOSTBOOT)
         {
             try
             {
