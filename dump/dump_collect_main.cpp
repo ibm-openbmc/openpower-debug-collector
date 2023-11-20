@@ -31,6 +31,7 @@ int main(int argc, char** argv)
     if (!((type == openpower::dump::SBE::SBE_DUMP_TYPE_HOSTBOOT) ||
           (type == openpower::dump::SBE::SBE_DUMP_TYPE_HARDWARE) ||
           (type == openpower::dump::SBE::SBE_DUMP_TYPE_PERFORMANCE) ||
+          (type == openpower::dump::SBE::SBE_DUMP_TYPE_MSBE) ||
           (type == openpower::dump::SBE::SBE_DUMP_TYPE_SBE)))
     {
         ExitWithError("type specified is invalid.", argv);
@@ -53,9 +54,10 @@ int main(int argc, char** argv)
     auto failingUnit = std::stoi(failingUnitStr);
     try
     {
-        if (type == openpower::dump::SBE::SBE_DUMP_TYPE_SBE)
+        if ((type == openpower::dump::SBE::SBE_DUMP_TYPE_SBE) ||
+            (type == openpower::dump::SBE::SBE_DUMP_TYPE_MSBE))
         {
-            openpower::phal::dump::collectSBEDump(id, failingUnit, path);
+            openpower::phal::dump::collectSBEDump(id, failingUnit, path, type);
         }
         else
         {
