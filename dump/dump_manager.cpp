@@ -35,7 +35,8 @@ constexpr auto ERROR_DUMP_NOT_ALLOWED =
 std::unordered_map<std::string, std::string> dumpTypeMap = {
     {"com.ibm.Dump.Create.DumpType.Hostboot", HB_DUMP_DBUS_OBJPATH},
     {"com.ibm.Dump.Create.DumpType.Hardware", HW_DUMP_DBUS_OBJPATH},
-    {"com.ibm.Dump.Create.DumpType.SBE", SBE_DUMP_DBUS_OBJPATH}};
+    {"com.ibm.Dump.Create.DumpType.SBE", SBE_DUMP_DBUS_OBJPATH},
+    {"com.ibm.Dump.Create.DumpType.MemoryBufferSBE", MSBE_DUMP_DBUS_OBJPATH}};
 
 sdbusplus::message::object_path
     Manager::createDump(DumpCreateParams createParams)
