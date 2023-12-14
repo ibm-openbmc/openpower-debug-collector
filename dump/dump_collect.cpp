@@ -31,7 +31,7 @@ constexpr auto SBEFIFO_CMD_CONTROL_INSN = 0x01;
 
 void writeDumpFile(const std::filesystem::path& path, const uint32_t id,
                    const uint8_t clockState, const uint8_t chipPos,
-                   util::DumpDataPtr& dataPtr, const uint32_t len)
+                   util::DumpDataPtr& dataPtr, const uint32_t len, bool isOcmb)
 {
     using namespace phosphor::logging;
     using namespace sdbusplus::xyz::openbmc_project::Common::Error;
@@ -41,10 +41,11 @@ void writeDumpFile(const std::filesystem::path& path, const uint32_t id,
     std::stringstream ss;
     ss << std::setw(8) << std::setfill('0') << id;
     std::string clockStr = (clockState == SBE::SBE_CLOCK_ON) ? "On" : "Off";
+    std::string chipStr = isOcmb ? "ocmb" : "proc";
 
     // Assuming only node0 is supported now
-    auto filename = ss.str() + ".SbeDataClocks" + clockStr + ".node0.proc" +
-                    std::to_string(chipPos);
+    auto filename = ss.str() + ".SbeDataClocks" + clockStr + ".node0." +
+                    chipStr + std::to_string(chipPos);
 
     std::filesystem::path dumpPath = path / filename;
     std::ofstream outfile{dumpPath, std::ios::out | std::ios::binary};
@@ -87,17 +88,19 @@ void writeDumpFile(const std::filesystem::path& path, const uint32_t id,
     outfile.close();
 }
 
-void collectDumpFromSBE(struct pdbg_target* proc,
+void collectDumpFromSBE(struct pdbg_target* chip,
                         const std::filesystem::path& path, const uint32_t id,
                         const uint8_t type, const uint8_t clockState,
                         const uint64_t failingUnit)
 {
     using namespace phosphor::logging;
-    auto chipPos = pdbg_target_index(proc);
-    log<level::INFO>(std::format("Collect dump from proc({}) path({}) id({}) "
+    auto chipPos = pdbg_target_index(chip);
+    bool isOcmb = openpower::phal::sbe::is_ody_ocmb_chip(chip);
+    std::string chipName = isOcmb ? "ocmb" : "proc";
+    log<level::INFO>(std::format("Collect dump from ({})({}) path({}) id({}) "
                                  "type({}) clock({}) failingUnit({})",
-                                 chipPos, path.string(), id, type, clockState,
-                                 failingUnit)
+                                 chipName, chipPos, path.string(), id, type,
+                                 clockState, failingUnit)
                          .c_str());
 
     util::DumpDataPtr dataPtr;
@@ -112,22 +115,9 @@ void collectDumpFromSBE(struct pdbg_target* proc,
         }
     }
 
-    auto primaryProc = false;
     try
     {
-        primaryProc = openpower::phal::pdbg::isPrimaryProc(proc);
-    }
-    catch (const std::exception& e)
-    {
-        log<level::ERR>(
-            std::format("Error checking for primary proc error({})", e.what())
-                .c_str());
-        // Attempt to collect the dump
-    }
-
-    try
-    {
-        openpower::phal::sbe::getDump(proc, type, clockState, collectFastArray,
+        openpower::phal::sbe::getDump(chip, type, clockState, collectFastArray,
                                       dataPtr.getPtr(), &len);
     }
     catch (const openpower::phal::sbeError_t& sbeError)
@@ -138,9 +128,9 @@ void collectDumpFromSBE(struct pdbg_target* proc,
             // SBE is not ready to accept chip-ops,
             // Skip the request, no additional error handling required.
             log<level::INFO>(std::format("Collect dump: Skipping ({}) dump({}) "
-                                         "on proc({}) clock state({})",
-                                         sbeError.what(), type, chipPos,
-                                         clockState)
+                                         "on ({})({}) clock state({})",
+                                         sbeError.what(), type, chipName,
+                                         chipPos, clockState)
                                  .c_str());
             return;
         }
@@ -179,10 +169,28 @@ void collectDumpFromSBE(struct pdbg_target* proc,
             catch (const std::exception& e)
             {
                 log<level::ERR>(
-                    std::format("SBE Dump request failed, proc({}) error({})",
-                                chipPos, e.what())
+                    std::format("SBE Dump request failed, ({})({}) error({})",
+                                chipName, chipPos, e.what())
                         .c_str());
             }
+        }
+
+        if (isOcmb)
+        {
+            return;
+        }
+
+        auto primaryProc = false;
+        try
+        {
+            primaryProc = openpower::phal::pdbg::isPrimaryProc(chip);
+        }
+        catch (const std::exception& e)
+        {
+            log<level::ERR>(
+                std::format("Error checking for primary proc error({})",
+                            e.what())
+                    .c_str());
         }
 
         if ((primaryProc) && (type == SBE::SBE_DUMP_TYPE_HOSTBOOT))
@@ -193,7 +201,7 @@ void collectDumpFromSBE(struct pdbg_target* proc,
         }
         return;
     }
-    writeDumpFile(path, id, clockState, chipPos, dataPtr, len);
+    writeDumpFile(path, id, clockState, chipPos, dataPtr, len, isOcmb);
 }
 
 void collectDump(const uint8_t type, const uint32_t id,
@@ -210,7 +218,7 @@ void collectDump(const uint8_t type, const uint32_t id,
     // Initialize PDBG
     openpower::phal::pdbg::init();
 
-    std::vector<struct pdbg_target*> procList;
+    std::vector<struct pdbg_target*> targetList;
 
     pdbg_for_each_class_target("proc", target)
     {
@@ -284,7 +292,24 @@ void collectDump(const uint8_t type, const uint32_t id,
                 }
             }
         }
-        procList.push_back(target);
+        targetList.push_back(target);
+        if (type == openpower::dump::SBE::SBE_DUMP_TYPE_HARDWARE)
+        {
+            struct pdbg_target* ocmbTarget;
+            pdbg_for_each_target("ocmb", target, ocmbTarget)
+            {
+                if (pdbg_target_probe(ocmbTarget) != PDBG_TARGET_ENABLED)
+                {
+                    continue;
+                }
+
+                if (!openpower::phal::sbe::is_ody_ocmb_chip(ocmbTarget))
+                {
+                    continue;
+                }
+                targetList.push_back(ocmbTarget);
+            }
+        }
     }
 
     std::vector<uint8_t> clockStates = {SBE::SBE_CLOCK_ON, SBE::SBE_CLOCK_OFF};
@@ -299,7 +324,7 @@ void collectDump(const uint8_t type, const uint32_t id,
 
         std::vector<pid_t> pidList;
 
-        for (pdbg_target* procTarget : procList)
+        for (pdbg_target* dumpTarget : targetList)
         {
             pid_t pid = fork();
             if (pid < 0)
@@ -313,7 +338,7 @@ void collectDump(const uint8_t type, const uint32_t id,
             {
                 try
                 {
-                    collectDumpFromSBE(procTarget, path, id, type, cstate,
+                    collectDumpFromSBE(dumpTarget, path, id, type, cstate,
                                        failingUnit);
                 }
                 catch (const std::runtime_error& error)
