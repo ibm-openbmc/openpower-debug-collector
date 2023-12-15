@@ -18,10 +18,11 @@ namespace sbe_chipop
  *  @param chipPos - Chip position of the failing unit
  *  @param dataPtr - Content to write to file
  *  @param len - Length of the content
+ *  @param[in] isOcmb - Whther dump is collected from OCMB chip
  */
 void writeDumpFile(const std::filesystem::path& path, const uint32_t id,
                    const uint8_t clockState, const uint8_t chipPos,
-                   util::DumpDataPtr& dataPtr, const uint32_t len);
+                   util::DumpDataPtr& dataPtr, const uint32_t len, bool isOcmb);
 
 /** @brief The function to orchestrate dump collection from different
  *  SBEs
