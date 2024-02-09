@@ -298,12 +298,11 @@ void collectDump(const uint8_t type, const uint32_t id,
             struct pdbg_target* ocmbTarget;
             pdbg_for_each_target("ocmb", target, ocmbTarget)
             {
-                if (pdbg_target_probe(ocmbTarget) != PDBG_TARGET_ENABLED)
+                if (!is_ody_ocmb_chip(ocmbTarget))
                 {
                     continue;
                 }
-
-                if (!is_ody_ocmb_chip(ocmbTarget))
+                if (pdbg_target_probe(ocmbTarget) != PDBG_TARGET_ENABLED)
                 {
                     continue;
                 }
