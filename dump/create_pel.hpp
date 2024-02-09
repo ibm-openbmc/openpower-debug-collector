@@ -28,11 +28,13 @@ using namespace openpower::phal;
  * @param[in] event - the event type
  * @param[in] sbeError - SBE error object
  * @param[in] ffdcData - failure data to append to PEL
+ * @param[in] isPOZ - if the FFDC is of POZ format or P10 format
  * @param[in] severity - severity of the log
  * @return Platform log id
  */
 uint32_t createSbeErrorPEL(const std::string& event, const sbeError_t& sbeError,
                            const FFDCData& ffdcData,
+                           bool isPOZ,
                            const Severity& severity = Severity::Error);
 
 /**

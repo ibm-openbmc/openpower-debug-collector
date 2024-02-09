@@ -95,7 +95,7 @@ void collectDumpFromSBE(struct pdbg_target* chip,
 {
     using namespace phosphor::logging;
     auto chipPos = pdbg_target_index(chip);
-    bool isOcmb = openpower::phal::sbe::is_ody_ocmb_chip(chip);
+    bool isOcmb = is_ody_ocmb_chip(chip);
     std::string chipName = isOcmb ? "ocmb" : "proc";
     log<level::INFO>(std::format("Collect dump from ({})({}) path({}) id({}) "
                                  "type({}) clock({}) failingUnit({})",
@@ -157,7 +157,7 @@ void collectDumpFromSBE(struct pdbg_target* chip,
                                        std::to_string((chipPos << 16) | cmd));
 
         auto logId = openpower::dump::pel::createSbeErrorPEL(event, sbeError,
-                                                             pelAdditionalData);
+                        pelAdditionalData, isOcmb);
 
         if (dumpIsRequired)
         {
@@ -276,7 +276,7 @@ void collectDump(const uint8_t type, const uint32_t id,
                     openpower::dump::pel::createSbeErrorPEL(
                         "org.open_power.Processor.Error.SbeChipOpFailure",
                         sbeError, pelAdditionalData,
-                        openpower::dump::pel::Severity::Informational);
+                        false, openpower::dump::pel::Severity::Informational);
                 }
                 else
                 {
@@ -303,7 +303,7 @@ void collectDump(const uint8_t type, const uint32_t id,
                     continue;
                 }
 
-                if (!openpower::phal::sbe::is_ody_ocmb_chip(ocmbTarget))
+                if (!is_ody_ocmb_chip(ocmbTarget))
                 {
                     continue;
                 }

@@ -34,8 +34,12 @@ constexpr auto loggingObjectPath = "/xyz/openbmc_project/logging";
 constexpr auto loggingInterface = "xyz.openbmc_project.Logging.Create";
 constexpr auto opLoggingInterface = "org.open_power.Logging.PEL";
 
+//p10 and POZ has different FFDC chip-op structure
+static const uint8_t P10_SBE_FFDC_SUBTYPE = 0xCB;
+static const uint8_t POZ_SBE_FFDC_SUBTYPE = 0xCC;
+
 uint32_t createSbeErrorPEL(const std::string& event, const sbeError_t& sbeError,
-                           const FFDCData& ffdcData, const Severity& severity)
+                           const FFDCData& ffdcData, bool isPOZ, const Severity& severity)
 {
     uint32_t plid = 0;
     std::unordered_map<std::string, std::string> additionalData = {
@@ -62,14 +66,19 @@ uint32_t createSbeErrorPEL(const std::string& event, const sbeError_t& sbeError,
     // No need of special processing , just log error with additional ffdc.
     if (fd > 0)
     {
+        uint8_t subType = P10_SBE_FFDC_SUBTYPE;
+        if(isPOZ)
+        {
+            subType = POZ_SBE_FFDC_SUBTYPE;
+        }
         // Refer phosphor-logging/extensions/openpower-pels/README.md section
         // "Self Boot Engine(SBE) First Failure Data Capture(FFDC) Support"
         // for details of related to createPEL with SBE FFDC information
         // usin g CreateWithFFDCFiles api.
         pelFFDCInfo.emplace_back(
             std::make_tuple(sdbusplus::xyz::openbmc_project::Logging::server::
-                                Create::FFDCFormat::Custom,
-                            static_cast<uint8_t>(0xCB),
+                            Create::FFDCFormat::Custom,
+                            subType,
                             static_cast<uint8_t>(0x01), sbeError.getFd()));
     }
     try
