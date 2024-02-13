@@ -6,6 +6,7 @@ extern "C"
 #include "create_pel.hpp"
 #include "dump_collect.hpp"
 
+#include <ekb/hwpf/fapi2/include/target_types.H>
 #include <libphal.H>
 #include <phal_exception.H>
 
@@ -141,21 +142,38 @@ void collectDumpFromSBE(struct pdbg_target* chip,
                 type, clockState, chipPos, collectFastArray, sbeError.what())
                 .c_str());
 
-        std::string event = "org.open_power.Processor.Error.SbeChipOpFailure";
         auto dumpIsRequired = false;
-
-        if (sbeError.errType() == openpower::phal::exception::SBE_CMD_TIMEOUT)
+        std::string event;
+        if (isOcmb)
         {
-            event = "org.open_power.Processor.Error.SbeChipOpTimeout";
-            dumpIsRequired = true;
+            event = "org.open_power.OCMB.Error.SbeChipOpFailure";
+            if (sbeError.errType() ==
+                openpower::phal::exception::SBE_CMD_TIMEOUT)
+            {
+                event = "org.open_power.OCMB.Error.SbeChipOpTimeout";
+                dumpIsRequired = true;
+            }
         }
-
+        else
+        {
+            event = "org.open_power.Processor.Error.SbeChipOpFailure";
+            if (sbeError.errType() ==
+                openpower::phal::exception::SBE_CMD_TIMEOUT)
+            {
+                event = "org.open_power.Processor.Error.SbeChipOpTimeout";
+                dumpIsRequired = true;
+            }
+        }
         openpower::dump::pel::FFDCData pelAdditionalData;
         uint32_t cmd = SBE::SBEFIFO_CMD_CLASS_DUMP | SBE::SBEFIFO_CMD_GET_DUMP;
 
         pelAdditionalData.emplace_back("SRC6",
                                        std::to_string((chipPos << 16) | cmd));
-
+        if (isOcmb)
+        {
+            pelAdditionalData.emplace_back(
+                "CHIP_TYPE", std::to_string(fapi2::TARGET_TYPE_OCMB_CHIP));
+        }
         auto logId = openpower::dump::pel::createSbeErrorPEL(event, sbeError,
                                                              pelAdditionalData);
 
