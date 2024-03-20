@@ -95,7 +95,7 @@ void collectDumpFromSBE(struct pdbg_target* chip,
 {
     using namespace phosphor::logging;
     auto chipPos = pdbg_target_index(chip);
-    bool isOcmb = openpower::phal::sbe::is_ody_ocmb_chip(chip);
+    bool isOcmb = is_ody_ocmb_chip(chip);
     std::string chipName = isOcmb ? "ocmb" : "proc";
     log<level::INFO>(std::format("Collect dump from ({})({}) path({}) id({}) "
                                  "type({}) clock({}) failingUnit({})",
@@ -303,7 +303,7 @@ void collectDump(const uint8_t type, const uint32_t id,
                     continue;
                 }
 
-                if (!openpower::phal::sbe::is_ody_ocmb_chip(ocmbTarget))
+                if (!is_ody_ocmb_chip(ocmbTarget))
                 {
                     continue;
                 }
