@@ -4,6 +4,7 @@
 
 #include <fcntl.h>
 #include <libekb.H>
+#include <phal_exception.H>
 #include <unistd.h>
 
 #include <phosphor-logging/elog.hpp>
@@ -34,12 +35,17 @@ constexpr auto loggingObjectPath = "/xyz/openbmc_project/logging";
 constexpr auto loggingInterface = "xyz.openbmc_project.Logging.Create";
 constexpr auto opLoggingInterface = "org.open_power.Logging.PEL";
 
+constexpr uint8_t FFDC_FORMAT_SUBTYPE = 0xCB;
+constexpr uint8_t FFDC_FORMAT_VERSION = 0x01;
+
 using FFDCInfo = std::vector<std::tuple<
     sdbusplus::xyz::openbmc_project::Logging::server::Create::FFDCFormat,
     uint8_t, uint8_t, sdbusplus::message::unix_fd>>;
 
+using Level = sdbusplus::xyz::openbmc_project::Logging::server::Entry::Level;
+
 uint32_t createPelWithFFDCfiles(const std::string& event,
-                                const std::string& errMsg,
+                                const std::string_view& errMsg,
                                 const FFDCData& ffdcData,
                                 const Severity& severity,
                                 const FFDCInfo& ffdcInfo)
@@ -106,26 +112,71 @@ uint32_t createSbeErrorPEL(const std::string& event, const sbeError_t& sbeError,
                             "SLID={}", iter.first)
                     .c_str());
 
-            // Refer phosphor-logging/extensions/openpower-pels/README.md
-            // section "Self Boot Engine(SBE) First Failure Data Capture(FFDC)
-            // Support" for details of related to createPEL with SBE FFDC
-            // information usin g CreateWithFFDCFiles api.
-            pelFFDCInfo.emplace_back(
-                std::make_tuple(sdbusplus::xyz::openbmc_project::Logging::
-                                    server::Create::FFDCFormat::Custom,
-                                static_cast<uint8_t>(0xCB),
-                                static_cast<uint8_t>(0x01), iter.second.first));
+            auto tuple = iter.second;
+            pelFFDCInfo.emplace_back(std::make_tuple(
+                sdbusplus::xyz::openbmc_project::Logging::server::Create::
+                    FFDCFormat::Custom,
+                FFDC_FORMAT_SUBTYPE, FFDC_FORMAT_VERSION, std::get<1>(tuple)));
 
             plid = createPelWithFFDCfiles(event, sbeError.what(), ffdcData,
                                           severity, pelFFDCInfo);
         } // endfor
     }
+    // we can create pel without any ffdc data
     else
     {
         FFDCInfo pelFFDCInfo;
         plid = createPelWithFFDCfiles(event, sbeError.what(), ffdcData,
                                       severity, pelFFDCInfo);
     } // endif
+    return plid;
+}
+
+uint32_t createPOZSbeErrorPEL(const std::string& event,
+                              const sbeError_t& sbeError,
+                              const FFDCData& ffdcData)
+{
+    uint32_t plid = 0;
+    auto& ffdcList = sbeError.getFfdcFileList();
+
+    // poz sbe errors are created only when there is FFDC data
+    for (auto& iter : ffdcList)
+    {
+        FFDCInfo pelFFDCInfo;
+        log<level::INFO>(
+            std::format("createPOZSbeErrorPEL capturing FFDC data for",
+                        "SLID={}", iter.first)
+                .c_str());
+        auto tuple = iter.second;
+        uint8_t severity = std::get<0>(tuple);
+
+        // convert fapi error to pel error
+        Level logSeverity = Level::Error;
+        if (severity == static_cast<uint8_t>(
+                            openpower::phal::FAPI2_ERRL_SEV_UNDEFINED) ||
+            severity ==
+                static_cast<uint8_t>(openpower::phal::FAPI2_ERRL_SEV_RECOVERED))
+        {
+            logSeverity = Level::Informational;
+        }
+        else if (severity == static_cast<uint8_t>(
+                                 openpower::phal::FAPI2_ERRL_SEV_PREDICTIVE))
+        {
+            logSeverity = Level::Warning;
+        }
+        else if (severity == static_cast<uint8_t>(
+                                 openpower::phal::FAPI2_ERRL_SEV_UNRECOVERABLE))
+        {
+            logSeverity = Level::Error;
+        }
+        pelFFDCInfo.emplace_back(std::make_tuple(
+            sdbusplus::xyz::openbmc_project::Logging::server::Create::
+                FFDCFormat::Custom,
+            FFDC_FORMAT_SUBTYPE, FFDC_FORMAT_VERSION, std::get<1>(tuple)));
+
+        plid = createPelWithFFDCfiles(event, sbeError.what(), ffdcData,
+                                      logSeverity, pelFFDCInfo);
+    } // endfor
     return plid;
 }
 
