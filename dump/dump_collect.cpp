@@ -122,6 +122,63 @@ void collectDumpFromSBE(struct pdbg_target* chip,
     {
         openpower::phal::sbe::getDump(chip, type, clockState, collectFastArray,
                                       dataPtr.getPtr(), &len);
+        // if dump operation is success, check if there is any FFDC data if
+        // found create pel for it
+        try
+        {
+            if (isOcmb)
+            {
+                openpower::phal::sbeError_t error =
+                    openpower::phal::sbe::capturePOZFFDC(chip);
+            }
+            else
+            {
+                openpower::phal::sbeError_t error =
+                    openpower::phal::sbe::captureFFDC(chip);
+            }
+            if (error.errType() == openpower::phal::exception::SBE_CMD_FAILED)
+            {
+                openpower::dump::pel::FFDCData pelAdditionalData;
+                uint32_t cmd = SBE::SBEFIFO_CMD_CLASS_DUMP |
+                               SBE::SBEFIFO_CMD_GET_DUMP;
+
+                pelAdditionalData.emplace_back(
+                    "SRC6", std::to_string((chipPos << 16) | cmd));
+
+                if (isOcmb)
+                {
+                    // data could be from earlier chip-op failures
+                    pelAdditionalData.emplace_back(
+                        "CHIP_TYPE",
+                        std::to_string(fapi2::TARGET_TYPE_OCMB_CHIP));
+                    openpower::dump::pel::createPOZSbeErrorPEL(
+                        "org.open_power.OCMB.Error.SbeChipOpFailure", error,
+                        pelAdditionalData);
+                }
+                else
+                {
+                    // severity is not defined in ffdc packet for p10, for
+                    // now create the pel as warning
+                    openpower::dump::pel::createSbeErrorPEL(
+                        "org.open_power.Processor.Error.SbeChipOpFailure",
+                        sbeError, pelAdditionalData, Severity::Warning);
+                }
+            }
+            else if (error.errType() ==
+                     openpower::phal::exception::SBE_FFDC_NO_DATA)
+            {
+                log<level::INFO>(
+                    "Collect dump chip-op success: no SBE FFDC data found");
+            }
+        }
+        catch (const openpower::phal::sbeError_t& sbeError)
+        {
+            log<level::ERR>(
+                std::format(
+                    "SBE Dump chip-op success but capture FFDC failed, ({})({}) error({})",
+                    chipName, chipPos, sbeError.what())
+                    .c_str());
+        }
     }
     catch (const openpower::phal::sbeError_t& sbeError)
     {
