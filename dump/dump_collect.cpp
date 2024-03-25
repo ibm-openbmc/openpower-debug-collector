@@ -153,6 +153,7 @@ void collectDumpFromSBE(struct pdbg_target* chip,
 
         std::string event;
         uint32_t logId = 0;
+        bool fcreatePel = true;
         if (isOcmb)
         {
             event = "org.open_power.OCMB.Error.SbeChipOpFailure";
@@ -162,10 +163,25 @@ void collectDumpFromSBE(struct pdbg_target* chip,
                 event = "org.open_power.OCMB.Error.SbeChipOpTimeout";
                 dumpIsRequired = true;
             }
-            pelAdditionalData.emplace_back(
-                "CHIP_TYPE", std::to_string(fapi2::TARGET_TYPE_OCMB_CHIP));
-            logId = openpower::dump::pel::createPOZSbeErrorPEL(
-                event, sbeError, pelAdditionalData);
+            else if (sbeError.errType() ==
+                     openpower::phal::exception::SBE_INTERNAL_FFDC_DATA)
+            {
+                event = "org.open_power.OCMB.Error.SbeInternalFFDCData";
+            }
+
+            // do not create PEL if there is no FFDC data
+            else if (sbeError.errType() ==
+                     openpower::phal::exception::SBE_FFDC_NO_DATA)
+            {
+                fcreatePel = false;
+            }
+            if (fcreatePel)
+            {
+                pelAdditionalData.emplace_back(
+                    "CHIP_TYPE", std::to_string(fapi2::TARGET_TYPE_OCMB_CHIP));
+                logId = openpower::dump::pel::createPOZSbeErrorPEL(
+                    event, sbeError, pelAdditionalData);
+            }
         }
         else
         {
@@ -176,8 +192,22 @@ void collectDumpFromSBE(struct pdbg_target* chip,
                 event = "org.open_power.Processor.Error.SbeChipOpTimeout";
                 dumpIsRequired = true;
             }
-            logId = openpower::dump::pel::createSbeErrorPEL(
-                event, sbeError, pelAdditionalData, Severity::Error);
+            else if (sbeError.errType() ==
+                     openpower::phal::exception::SBE_INTERNAL_FFDC_DATA)
+            {
+                event = "org.open_power.Processor.Error.SbeInternalFFDCData";
+            }
+            // do not create PEL if there is no FFDC data
+            else if (sbeError.errType() ==
+                     openpower::phal::exception::SBE_FFDC_NO_DATA)
+            {
+                fcreatePel = false;
+            }
+            if (fcreatePel)
+            {
+                logId = openpower::dump::pel::createSbeErrorPEL(
+                    event, sbeError, pelAdditionalData, Severity::Error);
+            }
         }
         if (dumpIsRequired)
         {

@@ -47,7 +47,7 @@ void collectDump(const uint8_t type, const uint32_t id,
 void collectDumpFromSBE(struct pdbg_target* proc,
                         const std::filesystem::path& path, const uint32_t id,
                         const uint8_t type, const uint8_t clockState,
-                        const uint8_t chipPos, const uint64_t failingUnit);
+                        const uint64_t failingUnit);
 
 } // namespace sbe_chipop
 } // namespace dump
