@@ -177,17 +177,12 @@ void collectDumpFromSBE(struct pdbg_target* chip,
         auto logId = openpower::dump::pel::createSbeErrorPEL(event, sbeError,
                                                              pelAdditionalData);
 
-        // TODO: requestSBEDump is not yet catered for ody
-        if (isOcmb)
-        {
-            return;
-        }
         if (dumpIsRequired)
         {
             // Request SBE Dump
             try
             {
-                util::requestSBEDump(chipPos, logId);
+                util::requestSBEDump(chipPos, logId, isOcmb);
             }
             catch (const std::exception& e)
             {
