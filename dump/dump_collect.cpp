@@ -109,7 +109,7 @@ void collectDumpFromSBE(struct pdbg_target* chip,
     uint8_t collectFastArray = 0;
     if (clockState == SBE::SBE_CLOCK_OFF)
     {
-        if ((type == SBE::SBE_DUMP_TYPE_HOSTBOOT) ||
+        if ((type == SBE::SBE_DUMP_TYPE_HOSTBOOT) || (isOcmb) ||
             ((type == SBE::SBE_DUMP_TYPE_HARDWARE) && (chipPos == failingUnit)))
         {
             collectFastArray = 1;
