@@ -109,7 +109,7 @@ void collectDumpFromSBE(struct pdbg_target* chip,
     uint8_t collectFastArray = 0;
     if (clockState == SBE::SBE_CLOCK_OFF)
     {
-        if ((type == SBE::SBE_DUMP_TYPE_HOSTBOOT) ||
+        if ((type == SBE::SBE_DUMP_TYPE_HOSTBOOT) || (isOcmb) ||
             ((type == SBE::SBE_DUMP_TYPE_HARDWARE) && (chipPos == failingUnit)))
         {
             collectFastArray = 1;
@@ -177,17 +177,12 @@ void collectDumpFromSBE(struct pdbg_target* chip,
         auto logId = openpower::dump::pel::createSbeErrorPEL(event, sbeError,
                                                              pelAdditionalData);
 
-        // TODO: requestSBEDump is not yet catered for ody
-        if (isOcmb)
-        {
-            return;
-        }
         if (dumpIsRequired)
         {
             // Request SBE Dump
             try
             {
-                util::requestSBEDump(chipPos, logId);
+                util::requestSBEDump(chipPos, logId, isOcmb);
             }
             catch (const std::exception& e)
             {

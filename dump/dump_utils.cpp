@@ -100,15 +100,20 @@ void monitorDump(const std::string& path, const uint32_t timeout)
     }
 }
 
-void requestSBEDump(const uint32_t failingUnit, const uint32_t eid)
+void requestSBEDump(const uint32_t failingUnit, const uint32_t eid, bool isOcmb)
 {
     log<level::INFO>(std::format("Requesting Dump PEL({}) chip position({})",
                                  eid, failingUnit)
                          .c_str());
 
-    constexpr auto path = "/xyz/openbmc_project/dump/sbe";
+    std::string path = "/xyz/openbmc_project/dump/sbe";
     constexpr auto interface = "xyz.openbmc_project.Dump.Create";
     constexpr auto function = "CreateDump";
+
+    if (isOcmb)
+    {
+        path = "/xyz/openbmc_project/dump/msbe";
+    }
 
     sdbusplus::message::message method;
 
@@ -117,8 +122,8 @@ void requestSBEDump(const uint32_t failingUnit, const uint32_t eid)
     try
     {
         auto service = getService(bus, interface, path);
-        auto method = bus.new_method_call(service.c_str(), path, interface,
-                                          function);
+        auto method = bus.new_method_call(service.c_str(), path.c_str(),
+                                          interface, function);
 
         // dbus call arguments
         std::unordered_map<std::string, std::variant<std::string, uint64_t>>
