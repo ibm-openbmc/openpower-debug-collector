@@ -36,6 +36,17 @@ uint32_t createSbeErrorPEL(const std::string& event, const sbeError_t& sbeError,
                            const Severity& severity = Severity::Error);
 
 /**
+ * @brief Create POZ SBE error PEL and return id
+ *
+ * @param[in] event - the event type
+ * @param[in] sbeError - SBE error object
+ * @param[in] ffdcData - failure data to append to PEL
+ * @return Platform log id
+ */
+uint32_t createPOZSbeErrorPEL(const std::string& event,
+                              const sbeError_t& sbeError,
+                              const FFDCData& ffdcData);
+/**
  * @class FFDCFile
  * @brief This class is used to create ffdc data file and to get fd
  */

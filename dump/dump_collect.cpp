@@ -30,6 +30,8 @@ namespace sbe_chipop
 constexpr auto SBEFIFO_CMD_CLASS_INSTRUCTION = 0xA700;
 constexpr auto SBEFIFO_CMD_CONTROL_INSN = 0x01;
 
+using Severity = sdbusplus::xyz::openbmc_project::Logging::server::Entry::Level;
+
 void writeDumpFile(const std::filesystem::path& path, const uint32_t id,
                    const uint8_t clockState, const uint8_t chipPos,
                    util::DumpDataPtr& dataPtr, const uint32_t len, bool isOcmb)
@@ -143,7 +145,15 @@ void collectDumpFromSBE(struct pdbg_target* chip,
                 .c_str());
 
         auto dumpIsRequired = false;
+        openpower::dump::pel::FFDCData pelAdditionalData;
+        uint32_t cmd = SBE::SBEFIFO_CMD_CLASS_DUMP | SBE::SBEFIFO_CMD_GET_DUMP;
+
+        pelAdditionalData.emplace_back("SRC6",
+                                       std::to_string((chipPos << 16) | cmd));
+
         std::string event;
+        uint32_t logId = 0;
+        bool fcreatePel = true;
         if (isOcmb)
         {
             event = "org.open_power.OCMB.Error.SbeChipOpFailure";
@@ -152,6 +162,25 @@ void collectDumpFromSBE(struct pdbg_target* chip,
             {
                 event = "org.open_power.OCMB.Error.SbeChipOpTimeout";
                 dumpIsRequired = true;
+            }
+            else if (sbeError.errType() ==
+                     openpower::phal::exception::SBE_INTERNAL_FFDC_DATA)
+            {
+                event = "org.open_power.OCMB.Error.SbeInternalFFDCData";
+            }
+
+            // do not create PEL if there is no FFDC data
+            else if (sbeError.errType() ==
+                     openpower::phal::exception::SBE_FFDC_NO_DATA)
+            {
+                fcreatePel = false;
+            }
+            if (fcreatePel)
+            {
+                pelAdditionalData.emplace_back(
+                    "CHIP_TYPE", std::to_string(fapi2::TARGET_TYPE_OCMB_CHIP));
+                logId = openpower::dump::pel::createPOZSbeErrorPEL(
+                    event, sbeError, pelAdditionalData);
             }
         }
         else
@@ -163,20 +192,23 @@ void collectDumpFromSBE(struct pdbg_target* chip,
                 event = "org.open_power.Processor.Error.SbeChipOpTimeout";
                 dumpIsRequired = true;
             }
+            else if (sbeError.errType() ==
+                     openpower::phal::exception::SBE_INTERNAL_FFDC_DATA)
+            {
+                event = "org.open_power.Processor.Error.SbeInternalFFDCData";
+            }
+            // do not create PEL if there is no FFDC data
+            else if (sbeError.errType() ==
+                     openpower::phal::exception::SBE_FFDC_NO_DATA)
+            {
+                fcreatePel = false;
+            }
+            if (fcreatePel)
+            {
+                logId = openpower::dump::pel::createSbeErrorPEL(
+                    event, sbeError, pelAdditionalData, Severity::Error);
+            }
         }
-        openpower::dump::pel::FFDCData pelAdditionalData;
-        uint32_t cmd = SBE::SBEFIFO_CMD_CLASS_DUMP | SBE::SBEFIFO_CMD_GET_DUMP;
-
-        pelAdditionalData.emplace_back("SRC6",
-                                       std::to_string((chipPos << 16) | cmd));
-        if (isOcmb)
-        {
-            pelAdditionalData.emplace_back(
-                "CHIP_TYPE", std::to_string(fapi2::TARGET_TYPE_OCMB_CHIP));
-        }
-        auto logId = openpower::dump::pel::createSbeErrorPEL(event, sbeError,
-                                                             pelAdditionalData);
-
         if (dumpIsRequired)
         {
             // Request SBE Dump
@@ -315,7 +347,6 @@ void collectDump(const uint8_t type, const uint32_t id,
                 {
                     continue;
                 }
-
                 if (!is_ody_ocmb_chip(ocmbTarget))
                 {
                     continue;
