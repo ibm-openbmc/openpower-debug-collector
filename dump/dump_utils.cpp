@@ -2,6 +2,7 @@
 
 #include <phosphor-logging/elog-errors.hpp>
 #include <phosphor-logging/elog.hpp>
+#include <phosphor-logging/lg2.hpp>
 #include <phosphor-logging/log.hpp>
 #include <xyz/openbmc_project/Common/File/error.hpp>
 
@@ -9,156 +10,98 @@
 #include <fstream>
 #include <string>
 
-namespace openpower
-{
-namespace dump
-{
-namespace util
+namespace openpower::dump::util
 {
 using namespace phosphor::logging;
-/**
- *  Callback for dump request properties change signal monitor
- *
- * @param[in] msg         Dbus message from the dbus match infrastructure
- * @param[in] path        The object path we are monitoring
- * @param[out] inProgress Used to break out of our dbus wait loop
- * @reutn Always non-zero indicating no error, no cascading callbacks
- */
-uint32_t dumpStatusChanged(sdbusplus::message::message& msg,
-                           const std::string& path, bool& inProgress)
+
+static void monitorDumpCreation(const std::string& path, const uint32_t timeout)
 {
-    // reply (msg) will be a property change message
-    std::string interface;
-    std::map<std::string, std::variant<std::string, uint8_t>> property;
-    msg.read(interface, property);
-
-    // looking for property Status changes
-    std::string propertyType = "Status";
-    auto dumpStatus = property.find(propertyType);
-
-    if (dumpStatus != property.end())
-    {
-        const std::string* status =
-            std::get_if<std::string>(&(dumpStatus->second));
-
-        if ((nullptr != status) && ("xyz.openbmc_project.Common.Progress."
-                                    "OperationStatus.InProgress" != *status))
-        {
-            // dump is done, trace some info and change in progress flag
-            log<level::INFO>(std::format("Dump status({}) : path={}",
-                                         status->c_str(), path.c_str())
-                                 .c_str());
-            inProgress = false;
-        }
-    }
-
-    return 1; // non-negative return code for successful callback
-}
-
-/**
- * Register a callback for dump progress status changes
- *
- * @param[in] path The object path of the dump to monitor
- * @param timeout - timeout - timeout interval in seconds
- */
-void monitorDump(const std::string& path, const uint32_t timeout)
-{
-    auto inProgress = true; // callback will update this
-
-    // setup the signal match rules and callback
-    std::string matchInterface = "xyz.openbmc_project.Common.Progress";
+    bool inProgress = true;
     auto bus = sdbusplus::bus::new_system();
+    auto match = sdbusplus::bus::match::match(
+        bus,
+        sdbusplus::bus::match::rules::propertiesChanged(
+            path, "xyz.openbmc_project.Common.Progress"),
+        [&](sdbusplus::message::message& msg) {
+        std::string interface;
+        std::map<std::string, std::variant<std::string, uint8_t>> property;
+        msg.read(interface, property);
 
-    std::unique_ptr<sdbusplus::bus::match_t> match =
-        std::make_unique<sdbusplus::bus::match_t>(
-            bus,
-            sdbusplus::bus::match::rules::propertiesChanged(
-                path.c_str(), matchInterface.c_str()),
-            [&](auto& msg) {
-        return dumpStatusChanged(msg, path, inProgress);
+        const auto dumpStatus = property.find("Status");
+        if (dumpStatus != property.end())
+        {
+            const std::string* status =
+                std::get_if<std::string>(&(dumpStatus->second));
+            if (status &&
+                *status !=
+                    "xyz.openbmc_project.Common.Progress.OperationStatus.InProgress")
+            {
+                lg2::info("Dump status({STATUS}) : path={PATH}", "STATUS",
+                          status->c_str(), "PATH", path.c_str());
+                inProgress = false;
+            }
+        }
     });
 
-    // wait for dump status to be completed (complete == true)
-    // or until timeout interval
-    log<level::INFO>("dump requested (waiting)");
-    auto timedOut = false;
-    uint32_t secondsCount = 0;
-    while (inProgress && !timedOut)
+    // Timeout management
+    for (uint32_t secondsCount = 0; inProgress && secondsCount < timeout;
+         ++secondsCount)
     {
         bus.wait(std::chrono::seconds(1));
         bus.process_discard();
-
-        if (++secondsCount == timeout)
-        {
-            timedOut = true;
-        }
     }
-    if (timedOut)
+
+    if (inProgress)
     {
-        log<level::ERR>("Dump progress status did not change to "
-                        "complete within the timeout interval, exiting...");
+        lg2::error("Dump progress timeout; dump may not be complete.");
     }
 }
 
-void requestSBEDump(const uint32_t failingUnit, const uint32_t eid, bool isOcmb)
+void requestSBEDump(const uint32_t failingUnit, const uint32_t eid,
+                    SBETypes sbeType)
 {
-    log<level::INFO>(std::format("Requesting Dump PEL({}) chip position({})",
-                                 eid, failingUnit)
-                         .c_str());
+    lg2::info(
+        "Requesting Dump PEL({EID}) chip({CHIPTYPE}) position({FAILINGUNIT})",
+        "EID", eid, "CHIPTYPE", sbeTypeAttributes.at(sbeType).chipName,
+        "FAILINGUNIT", failingUnit);
 
-    std::string path = "/xyz/openbmc_project/dump/sbe";
+    auto path = sbeTypeAttributes.at(sbeType).dumpPath.c_str();
     constexpr auto interface = "xyz.openbmc_project.Dump.Create";
     constexpr auto function = "CreateDump";
 
-    if (isOcmb)
-    {
-        path = "/xyz/openbmc_project/dump/msbe";
-    }
-
-    sdbusplus::message::message method;
-
-    auto bus = sdbusplus::bus::new_default();
-
     try
     {
+        auto bus = sdbusplus::bus::new_default();
         auto service = getService(bus, interface, path);
-        auto method = bus.new_method_call(service.c_str(), path.c_str(),
-                                          interface, function);
+        auto method = bus.new_method_call(service.c_str(), path, interface,
+                                          function);
 
-        // dbus call arguments
         std::unordered_map<std::string, std::variant<std::string, uint64_t>>
-            createParams;
-        createParams["com.ibm.Dump.Create.CreateParameters.ErrorLogId"] =
-            uint64_t(eid);
-        createParams["com.ibm.Dump.Create.CreateParameters.FailingUnitId"] =
-            uint64_t(failingUnit);
+            createParams = {
+                {"com.ibm.Dump.Create.CreateParameters.ErrorLogId",
+                 uint64_t(eid)},
+                {"com.ibm.Dump.Create.CreateParameters.FailingUnitId",
+                 uint64_t(failingUnit)}};
 
         method.append(createParams);
-
-        auto response = bus.call(method);
-
-        // reply will be type dbus::ObjectPath
         sdbusplus::message::object_path reply;
-        response.read(reply);
+        bus.call(method).read(reply);
 
-        // monitor dump progress
-        monitorDump(reply, SBE_DUMP_TIMEOUT);
+        monitorDumpCreation(reply.str, SBE_DUMP_TIMEOUT);
     }
     catch (const sdbusplus::exception::exception& e)
     {
-        log<level::ERR>(std::format("D-Bus call createDump exception",
-                                    "OBJPATH={}, INTERFACE={}, EXCEPTION={}",
-                                    path, interface, e.what())
-                            .c_str());
+        lg2::error("D-Bus call createDump exception OBJPATH={OBJPATH}, "
+                   "INTERFACE={INTERFACE}, EXCEPTION={ERROR}",
+                   "OBJPATH", path, "INTERFACE", interface, "ERROR", e);
         constexpr auto ERROR_DUMP_DISABLED =
             "xyz.openbmc_project.Dump.Create.Error.Disabled";
         if (e.name() == ERROR_DUMP_DISABLED)
         {
             // Dump is disabled, Skip the dump collection.
-            log<level::INFO>(
-                std::format("Dump is disabled on({}), skipping dump collection",
-                            failingUnit)
-                    .c_str());
+            lg2::info("Dump is disabled unit({FAILINGUNIT}), "
+                      "skipping dump collection",
+                      "FAILINGUNIT", failingUnit);
         }
         else
         {
@@ -170,8 +113,6 @@ void requestSBEDump(const uint32_t failingUnit, const uint32_t eid, bool isOcmb)
         throw e;
     }
 }
-
-// Mapper
 
 std::string getService(sdbusplus::bus::bus& bus, const std::string& intf,
                        const std::string& path)
@@ -192,24 +133,24 @@ std::string getService(sdbusplus::bus::bus& bus, const std::string& intf,
 
         if (mapperResponse.empty())
         {
-            log<level::ERR>(std::format("Empty mapper response for GetObject "
-                                        "interface({}), path({})",
-                                        intf, path)
-                                .c_str());
+            lg2::error(
+                "Empty mapper response for GetObject interface({INTERFACE}), "
+                "path({PATH})",
+                "INTERFACE", intf, "PATH", path);
+
             throw std::runtime_error("Empty mapper response for GetObject");
         }
         return mapperResponse.begin()->first;
     }
     catch (const sdbusplus::exception::exception& ex)
     {
-        log<level::ERR>(std::format("Mapper call failed for GetObject "
-                                    "errorMsg({}), path({}), interface({}) ",
-                                    ex.what(), path, intf)
-                            .c_str());
+        lg2::error(
+            "Mapper call failed for GetObject errorMsg({ERROR}), path({PATH}),"
+            "interface({INTERFACE})",
+            "ERROR", ex, "PATH", path, "INTERFACE", intf);
+
         throw;
     }
 }
 
-} // namespace util
-} // namespace dump
-} // namespace openpower
+} // namespace openpower::dump::util

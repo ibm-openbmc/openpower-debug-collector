@@ -1,73 +1,96 @@
-#include "argument.hpp"
-#include "dump_collect.hpp"
 #include "sbe_consts.hpp"
+#include "sbe_dump_collector.hpp"
 
 #include <libphal.H>
 
-#include <iostream>
-#include <string>
+#include <CLI/App.hpp>
+#include <CLI/Config.hpp>
+#include <CLI/Formatter.hpp>
 
-static void ExitWithError(const char* err, char** argv)
-{
-    openpower::dump::util::ArgumentParser::usage(argv);
-    std::cerr << std::endl;
-    std::cerr << "ERROR: " << err << std::endl;
-    exit(EXIT_FAILURE);
-}
+#include <filesystem>
+#include <iostream>
 
 int main(int argc, char** argv)
 {
-    // Read arguments.
-    auto options = openpower::dump::util::ArgumentParser(argc, argv);
+    using namespace openpower::dump::sbe_chipop;
+    using std::filesystem::path;
+    using namespace openpower::dump::SBE;
+    using namespace openpower::phal::dump;
 
-    // Parse arguments
-    auto typeStr = (options)["type"];
-    if (typeStr.empty())
-    {
-        ExitWithError("type not specified", argv);
-    }
+    CLI::App app{"Dump Collector Application", "dump-collect"};
+    app.description(
+        "Collects dumps from the Self Boot Engine (SBE) based on "
+        "provided parameters.\nSupports different types of dumps and requires "
+        "specific options based on the dump type.");
 
-    auto type = std::stoi(typeStr);
-    if (!((type == openpower::dump::SBE::SBE_DUMP_TYPE_HOSTBOOT) ||
-          (type == openpower::dump::SBE::SBE_DUMP_TYPE_HARDWARE) ||
-          (type == openpower::dump::SBE::SBE_DUMP_TYPE_PERFORMANCE) ||
-          (type == openpower::dump::SBE::SBE_DUMP_TYPE_MSBE) ||
-          (type == openpower::dump::SBE::SBE_DUMP_TYPE_SBE)))
-    {
-        ExitWithError("type specified is invalid.", argv);
-    }
+    int type = 0;
+    uint32_t id;
+    std::string pathStr;
+    std::optional<uint64_t> failingUnit;
 
-    auto idStr = (options)["id"];
-    if (idStr.empty())
-    {
-        ExitWithError("Dump id is not provided", argv);
-    }
-    auto id = std::stoi(idStr);
+    app.add_option("--type, -t", type, "Type of the dump")
+        ->required()
+        ->check(CLI::IsMember({SBE_DUMP_TYPE_HARDWARE, SBE_DUMP_TYPE_HOSTBOOT,
+                               SBE_DUMP_TYPE_SBE, SBE_DUMP_TYPE_PERFORMANCE,
+                               SBE_DUMP_TYPE_MSBE}));
 
-    auto path = (options)["path"];
-    if (path.empty())
-    {
-        ExitWithError("Collection path not specified.", argv);
-    }
+    app.add_option("--id, -i", id, "ID of the dump")->required();
 
-    auto failingUnitStr = (options)["failingunit"];
-    auto failingUnit = std::stoi(failingUnitStr);
+    app.add_option("--path, -p", pathStr,
+                   "Path to store the collected dump files")
+        ->required();
+
+    app.add_option("--failingunit, -f", failingUnit, "ID of the failing unit");
+
     try
     {
-        if ((type == openpower::dump::SBE::SBE_DUMP_TYPE_SBE) ||
-            (type == openpower::dump::SBE::SBE_DUMP_TYPE_MSBE))
+        CLI11_PARSE(app, argc, argv);
+    }
+    catch (const CLI::ParseError& e)
+    {
+        return app.exit(e);
+    }
+
+    if (((type == SBE_DUMP_TYPE_HARDWARE) || (type == SBE_DUMP_TYPE_SBE) ||
+         (type == SBE_DUMP_TYPE_MSBE)) &&
+        !failingUnit.has_value())
+    {
+        std::cerr
+            << "Failing unit ID is required for Hardware and SBE type dumps\n";
+        return EXIT_FAILURE;
+    }
+
+    // Directory creation should happen here, after successful parsing
+    std::filesystem::path dirPath{pathStr};
+    if (!std::filesystem::exists(dirPath))
+    {
+        std::filesystem::create_directories(dirPath);
+    }
+
+    SbeDumpCollector dumpCollector;
+
+    auto failingUnitId = 0xFFFFFF; // Default or unspecified value
+    if (failingUnit.has_value())
+    {
+        failingUnitId = failingUnit.value();
+    }
+
+    try
+    {
+        if ((type == SBE_DUMP_TYPE_SBE) || (type == SBE_DUMP_TYPE_MSBE))
         {
-            openpower::phal::dump::collectSBEDump(id, failingUnit, path, type);
+            collectSBEDump(id, failingUnitId, pathStr, type);
         }
         else
         {
-            openpower::dump::sbe_chipop::collectDump(type, id, failingUnit,
-                                                     path);
+            dumpCollector.collectDump(type, id, failingUnitId, pathStr);
         }
     }
     catch (const std::exception& e)
     {
-        std::cerr << e.what() << std::endl;
-        exit(EXIT_FAILURE);
+        std::cerr << "Failed to collect dump: " << e.what() << std::endl;
+        std::exit(EXIT_FAILURE);
     }
+
+    return 0;
 }

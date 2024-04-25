@@ -1,9 +1,8 @@
 #pragma once
-namespace openpower
-{
-namespace dump
-{
-namespace SBE
+
+#include <cstdint>
+
+namespace openpower::dump::SBE
 {
 // Dump type to the sbe_dump chipop
 constexpr auto SBE_DUMP_TYPE_HOSTBOOT = 0x5;
@@ -26,6 +25,14 @@ constexpr auto SBEFIFO_CMD_CLASS_DUMP = 0xAA00;
 
 // Get dump method
 constexpr auto SBEFIFO_CMD_GET_DUMP = 0x01;
-} // namespace SBE
-} // namespace dump
-} // namespace openpower
+
+// Stop instruction command class
+constexpr auto SBEFIFO_CMD_CLASS_INSTRUCTION = 0xA700;
+
+// Stop instruction method
+constexpr auto SBEFIFO_CMD_CONTROL_INSN = 0x01;
+
+// FFDC Format details
+constexpr uint8_t FFDC_FORMAT_SUBTYPE = 0xCB;
+constexpr uint8_t FFDC_FORMAT_VERSION = 0x01;
+} // namespace openpower::dump::SBE

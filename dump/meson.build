@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+
 cxx = meson.get_compiler('cpp')
 
 sdeventplus_dep = dependency('sdeventplus')
@@ -13,7 +14,10 @@ dump_deps = [
     phosphorlogging,
 ]
 
+cxx = meson.get_compiler('cpp')
+
 collect_deps = [
+   CLI11_dep,
    phosphorlogging,
    cxx.find_library('pdbg'),
    cxx.find_library('libdt-api'),
@@ -51,13 +55,13 @@ dump_src = files(
 )
 
 collect_src = files(
-    'argument.cpp',
-    'dump_utils.cpp',
-    'dump_collect.cpp',
+    'sbe_dump_collector.cpp',
     'dump_collect_main.cpp',
+    'dump_utils.cpp',
     'create_pel.cpp',
+    'dump_utils.cpp',
+    'sbe_type.cpp',
 )
-
 
 executable('openpower-dump-manager',
     dump_src,
