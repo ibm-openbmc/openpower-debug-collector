@@ -205,7 +205,7 @@ bool SbeDumpCollector::logErrorAndCreatePEL(
 
         // Common FFDC data
         openpower::dump::pel::FFDCData pelAdditionalData = {
-            {"SRC6", std::format("{:X}{:X}", chipPos, (cmdClass | cmdType))}};
+            {"SRC6", std::format("0x{:X}{:X}", chipPos, (cmdClass | cmdType))}};
 
         if (sbeType == SBETypes::OCMB)
         {
@@ -343,10 +343,10 @@ void SbeDumpCollector::writeDumpFile(
 
     // Construct the filename
     std::ostringstream filenameBuilder;
-    filenameBuilder << std::setw(8) << std::setfill('0') << id
+    filenameBuilder << std::hex << std::setw(8) << std::setfill('0') << id
                     << ".SbeDataClocks"
                     << (clockState == SBE_CLOCK_ON ? "On" : "Off") << ".node"
-                    << static_cast<int>(nodeNum) << "." << chipName
+                    << std::dec << static_cast<int>(nodeNum) << "." << chipName
                     << static_cast<int>(chipPos);
 
     auto dumpPath = path / filenameBuilder.str();
