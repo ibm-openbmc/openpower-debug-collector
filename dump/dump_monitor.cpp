@@ -105,7 +105,7 @@ void DumpMonitor::handleDBusSignal(sdbusplus::message::message& msg)
 
     msg.read(objectPath, interfaces);
 
-    lg2::info("Signal received at PATH: ", "PATH", objectPath);
+    lg2::info("Signal received at {PATH}: ", "PATH", objectPath);
 
     // There can be new a entry created after the completion of the collection
     // with completed status, so pick only entries with InProgress status.

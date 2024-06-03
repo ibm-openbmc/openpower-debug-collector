@@ -134,6 +134,10 @@ class DumpMonitor
         {
             return SBE_DUMP_TYPE_SBE;
         }
+        else if (type == 4)
+        {
+            return SBE_DUMP_TYPE_MSBE;
+        }
         return 0;
     }
 
