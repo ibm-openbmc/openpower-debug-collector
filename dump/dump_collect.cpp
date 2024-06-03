@@ -166,8 +166,9 @@ void collectDumpFromSBE(struct pdbg_target* proc,
         pelAdditionalData.emplace_back("SRC6",
                                        std::to_string((chipPos << 16) | cmd));
 
-        auto logId = openpower::dump::pel::createSbeErrorPEL(event, sbeError,
-                                                             pelAdditionalData);
+        auto logId = openpower::dump::pel::createSbeErrorPEL(
+            event, sbeError, pelAdditionalData,
+            openpower::dump::pel::Severity::Informational);
 
         if (dumpIsRequired)
         {
