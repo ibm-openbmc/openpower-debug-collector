@@ -30,13 +30,27 @@ function dump_time_details() {
     if [ -z "$START_TIME" ] || [ "$START_TIME" -eq 0 ]; then
         echo "Could not fetch start time for $dump_id. Setting manually"
         START_TIME=$(date +%s)
+    else
+        # converting microseconds to seconds by stripping last 6 digits from time
+        START_TIME="$START_TIME"
+        if [ ${#START_TIME} -gt 10 ]; then
+            START_TIME="${START_TIME%??????}"
+        fi
     fi
 
     start=$(date -d @"$START_TIME" +'%Y-%m-%d %H:%M:%S')
+
     if [ -z "$END_TIME" ] || [ "$END_TIME" -eq 0 ]; then
         echo "Could not fetch end time for $dump_id. Setting manually"
         END_TIME=$(date +%s)
+    else
+        # converting microseconds to seconds by stripping last 6 digits from time
+        END_TIME="$END_TIME"
+        if [ ${#END_TIME} -gt 10 ]; then
+            END_TIME="${END_TIME%??????}"
+        fi
     fi
+
     end=$(date -d @"$END_TIME" +'%Y-%m-%d %H:%M:%S')
 
     printf "dump-start-time: %s\n" "$start" >> "$YAML_FILE"
