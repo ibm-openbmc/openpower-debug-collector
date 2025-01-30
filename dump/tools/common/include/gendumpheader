@@ -59,7 +59,7 @@ function add_originator_details() {
         nulltoadd=$(( SIZE_4 - len ))
         printf '%s' "$ORIGINATOR_TYPE" >> "$FILE"
         if [ "$nulltoadd" -gt 0 ]; then
-             add_null "$nulltoadd"
+            add_null "$nulltoadd"
         fi
     fi
 
@@ -70,7 +70,7 @@ function add_originator_details() {
         nulltoadd=$(( SIZE_32 - len ))
         printf '%s' "$ORIGINATOR_ID" >> "$FILE"
         if [ "$nulltoadd" -gt 0 ]; then
-             add_null "$nulltoadd"
+            add_null "$nulltoadd"
         fi
     fi
 }
