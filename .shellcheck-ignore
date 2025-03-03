@@ -1,6 +1,7 @@
 dump/tools/bmcdump/plugins/badpel
 dump/tools/bmcdump/plugins/cfam
 dump/tools/bmcdump/plugins/dumpfilelist
+dump/tools/bmcdump/plugins/emobjects
 dump/tools/bmcdump/plugins/faultlog
 dump/tools/bmcdump/plugins/guardlist
 dump/tools/bmcdump/plugins/obmcconsole1
