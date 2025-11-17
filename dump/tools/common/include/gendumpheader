@@ -274,8 +274,7 @@ function get_bmc_model_serial_number() {
     fi
 
     serialNo=$(busctl get-property $INVENTORY_MANAGER $INVENTORY_PATH \
-     $INVENTORY_ASSET_INT SerialNumber | cut -d " " -f 2 | sed "s/^\(\"\)\(.*\)\1\$/\2/g")
-
+        $INVENTORY_ASSET_INT SerialNumber | cut -d " " -f 2 | sed "s/^\(\"\)\(.*\)\1\$/\2/g")
     if [[ -z "$serialNo" || ! $serialNo =~ ^[A-Za-z0-9]+$ ]]; then
         serialNo="0000000"
     else
