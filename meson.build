@@ -45,6 +45,42 @@ if get_option('dump-collection').allowed()
     subdir('dump')
 endif
 
+# Install dumptool Python package for phal-next backend
+if phal_backend == 'next'
+    python = import('python').find_installation('python3')
+    
+    # Install the dumptool package
+    python.install_sources(
+        'tools/dumptool/__init__.py',
+        'tools/dumptool/__main__.py',
+        'tools/dumptool/cli.py',
+        'tools/dumptool/models.py',
+        subdir: 'dumptool',
+    )
+    
+    python.install_sources(
+        'tools/dumptool/clients/__init__.py',
+        'tools/dumptool/clients/dbus_client.py',
+        subdir: 'dumptool/clients',
+    )
+    
+    python.install_sources(
+        'tools/dumptool/services/__init__.py',
+        'tools/dumptool/services/dump_service.py',
+        subdir: 'dumptool/services',
+    )
+    
+    # Create wrapper script in /usr/bin
+    configure_file(
+        input: 'tools/dumptool-wrapper.sh',
+        output: 'dumptool',
+        configuration: configuration_data(),
+        install: true,
+        install_dir: get_option('bindir'),
+        install_mode: 'rwxr-xr-x',
+    )
+endif
+
 deps = [CLI11_dep, sdbusplus_dep, phosphorlogging, extra_deps]
 
 executable(
