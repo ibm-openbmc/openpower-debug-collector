@@ -6,6 +6,10 @@
 #include "sbe_type.hpp"
 #include "targeting_iface.hpp"
 
+#ifdef NEXT_PHAL
+#include <dump.H>
+#endif
+
 #include <phosphor-logging/elog-errors.hpp>
 #include <phosphor-logging/lg2.hpp>
 #include <phosphor-logging/log.hpp>
@@ -20,6 +24,7 @@
 #include <future>
 #include <iomanip>
 #include <map>
+#include <optional>
 #include <span>
 #include <sstream>
 #include <stdexcept>
@@ -34,20 +39,29 @@ namespace phal_tgt = openpower::dump::phal::targeting;
 namespace phal_chipop = openpower::dump::phal::chipop;
 namespace phal_err = openpower::dump::phal::error;
 
-void SbeDumpCollector::collectDump(uint8_t type, uint32_t id,
-                                   uint32_t failingUnit,
-                                   const std::filesystem::path& path)
+void SbeDumpCollector::collectDump(
+    uint8_t type, uint32_t id, uint32_t failingUnit,
+    const std::filesystem::path& path,
+    const std::optional<std::string>& triggerType)
 {
     if ((type == SBE_DUMP_TYPE_SBE) || (type == SBE_DUMP_TYPE_MSBE))
     {
 #ifdef LEGACY_PHAL
-        // SBE dump collection uses legacy HWPs (libipl/libphal).
-        // Not yet implemented for the next backend.
         collectSBEDump(id, failingUnit, path, static_cast<int>(type));
 #else
-        lg2::error("SBE dump collection not supported on this backend "
-                   "(type={TYPE})",
-                   "TYPE", type);
+        // For non-LEGACY_PHAL: handle trigger-based SBE dumps
+        if (triggerType.has_value())
+        {
+            collectTriggeredSBEDump(id, failingUnit, triggerType.value(),
+                                    std::nullopt, path);
+        }
+        else
+        {
+            lg2::error(
+                "SBE dump collection requires trigger type on this backend "
+                "(type={TYPE})",
+                "TYPE", type);
+        }
 #endif
         return;
     }
@@ -132,6 +146,75 @@ void SbeDumpCollector::collectHWHBDump(uint8_t type, uint32_t id,
         throw std::runtime_error("Failed to collect the dump");
     }
     lg2::info("Dump collection completed");
+}
+void SbeDumpCollector::collectTriggeredSBEDump(
+    uint32_t id, uint32_t failingUnit, const std::string& triggerType,
+    const std::optional<std::string>& dumpFilesPath,
+    const std::filesystem::path& path)
+{
+    // Initialize PHAL targeting before accessing target-related APIs
+    initializePhalAbstraction();
+
+    // triggerType is already the bare value (e.g. "Timeout", "BootFailure");
+    // callers strip the D-Bus enum prefix before it reaches this function.
+    lg2::info("Collecting triggered SBE dump: triggerType={TRIGGER} id={ID} "
+              "failingUnit={FAILINGUNIT} path={PATH}",
+              "TRIGGER", triggerType, "ID", id, "FAILINGUNIT", failingUnit,
+              "PATH", path.string());
+
+    if (triggerType == "Timeout")
+    {
+        // For Timeout: write dump files directly into the path opdreport
+        // created (plat_dump directory) so opdreport can find and package them
+        auto err =
+            hostfw::dump::recoverSppeAndCollectDump(id, failingUnit, path);
+        if (err)
+        {
+            // Commit the error as a PEL before throwing
+            uint32_t pelId = phal_err::commitHostfwError(std::move(err));
+            lg2::error(
+                "collectTriggeredSBEDump: Timeout recovery failed for unit "
+                "{UNIT}, PEL ID: {PEL}",
+                "UNIT", failingUnit, "PEL", pelId);
+            throw std::runtime_error(
+                "collectTriggeredSBEDump: hostfw recovery failed for unit " +
+                std::to_string(failingUnit));
+        }
+
+        lg2::info(
+            "collectTriggeredSBEDump: Successfully recovered and collected Timeout "
+            "dump from unit {UNIT}",
+            "UNIT", failingUnit);
+    }
+    else if (triggerType == "BootFailure")
+    {
+        // For BootFailure: dump files were pre-collected; return the provided
+        // path
+        if (dumpFilesPath.has_value() && !dumpFilesPath->empty())
+        {
+            std::filesystem::path preCollectedPath(dumpFilesPath.value());
+            lg2::info(
+                "collectTriggeredSBEDump: Using pre-collected BootFailure "
+                "dump path {PATH}",
+                "PATH", preCollectedPath.string());
+        }
+        else
+        {
+            std::string errorMsg =
+                "collectTriggeredSBEDump: DumpFilesPath required for BootFailure dumps";
+            lg2::error("{ERROR}", "ERROR", errorMsg);
+            throw std::runtime_error(errorMsg);
+        }
+    }
+    else
+    {
+        // Future trigger types (Downstream, etc.)
+        std::string errorMsg =
+            std::string("collectTriggeredSBEDump: Unsupported trigger type: ") +
+            triggerType;
+        lg2::error("{ERROR}", "ERROR", errorMsg);
+        throw std::runtime_error(errorMsg);
+    }
 }
 
 #ifdef LEGACY_PHAL

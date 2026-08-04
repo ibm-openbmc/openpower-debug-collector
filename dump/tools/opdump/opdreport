@@ -174,9 +174,16 @@ function collect() {
     if [ "$sbe_subtype" == "BootFailure" ] && [ -n "$boot_failure_path" ]; then
         collect_bootfail_dump "$dump_outpath"
     else
-        # Other cases
-        dump-collect --type "$dump_sbe_type" --id "0x$dump_id" \
-            --failingunit "$failing_unit" --path "$dump_outpath"
+        # For Timeout and other SBE dump types, call dump-collect with trigger type
+        if [ -n "$sbe_subtype" ]; then
+            dump-collect --type "$dump_sbe_type" --id "0x$dump_id" \
+                --failingunit "$failing_unit" --path "$dump_outpath" \
+                --triggertype "$sbe_subtype"
+        else
+            # Fallback for cases without trigger type
+            dump-collect --type "$dump_sbe_type" --id "0x$dump_id" \
+                --failingunit "$failing_unit" --path "$dump_outpath"
+        fi
     fi
 }
 
@@ -235,6 +242,17 @@ function package() {
     mv "$name" "$dump_dir"
 
     rm -rf "$content_path"
+
+    # Clean up pre-collected dump path (e.g., /tmp/sppe_dump/sbe_timeout_dump.XXXXXX)
+    # This directory was created by hostfw/dump-collect for Timeout dumps
+    if [ -n "$boot_failure_path" ] && [ -d "$boot_failure_path" ]; then
+        echo "Cleaning up pre-collected dump directory: $boot_failure_path"
+        if ! rm -rf "$boot_failure_path"; then
+            echo "Warning: Failed to clean up pre-collected dump directory: $boot_failure_path"
+            # Non-fatal, continue
+        fi
+    fi
+
     rm -rf "$FILE" "$name"
 
     return "$SUCCESS"
