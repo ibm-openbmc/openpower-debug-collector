@@ -39,6 +39,10 @@ Options:
                               SBE dump subtype (BootFailure, Timeout, Downstream).
                               Determines collection method for SBE dumps.
                               Optional parameter.
+        --mpipl-src <path>    Path to the raw MPIPL dump file written by the
+                              Hostboot/MPIPL collection agent.  When this option
+                              is supplied the script takes the MPIPL path: -t is
+                              not required and dump-collect is not invoked.
         -h, --help            Display this help and exit.
 EOF
 )
@@ -83,12 +87,27 @@ declare -x dump_content_type=""
 declare -x FILE=""
 declare -x boot_failure_path=""
 declare -x sbe_subtype=""
+declare -x mpipl_src=""
 
 #Source opdreport common functions
 . $DREPORT_INCLUDE/opfunctions
 
 # @brief Check the validity of user inputs and initialize global variables
+#
+# For MPIPL dumps (--mpipl-src supplied): name construction, dump_sbe_type
+# validation, and get_originator_details are all skipped — package_mpipl()
+# handles everything.  Non-MPIPL calls have mpipl_src="" so they fall through
+# to the full initialization block below.
 function initialize() {
+    if [[ -n "$mpipl_src" ]]; then
+        return "$SUCCESS"
+    fi
+
+    if [ -z "$dump_sbe_type" ]; then
+        echo "Error: Dump type is not provided."
+        return "$RESOURCE_UNAVAILABLE"
+    fi
+
     # shellcheck disable=SC2154 # name comes from elsewhere
     if [ -z "$name" ]; then
         name="SYSDUMP"
@@ -96,11 +115,6 @@ function initialize() {
     fetch_serial_number
     # shellcheck disable=SC2154 # dump_id comes from elsewhere
     name="${name}.${serialNo}.${dump_id}.${dDay}"
-
-    if [ -z "$dump_sbe_type" ]; then
-        echo "Error: Dump type is not provided."
-        return "$RESOURCE_UNAVAILABLE"
-    fi
 
     if [ -z "$dump_dir" ]; then
         dump_dir=$PWD
@@ -164,6 +178,287 @@ function collect() {
         dump-collect --type "$dump_sbe_type" --id "0x$dump_id" \
             --failingunit "$failing_unit" --path "$dump_outpath"
     fi
+}
+
+# ---------------------------------------------------------------------------
+# MPIPL-specific functions
+# ---------------------------------------------------------------------------
+
+# @brief Override the PHAL-owned fields in the MPIPL dump header.
+#
+# According to the MPIPL System Dump Header Field Ownership document, the
+# following fields are written initially by Hostboot/MPIPL but must be
+# overridden by PHAL (i.e. the BMC-side packager) once the raw dump file
+# has been fully written and closed:
+#
+#   PAPR FILE Directory (0x0000-0x003F):
+#     +0x00  Entry Header       8 B  ASCII 'FILE    '
+#     +0x08  Entry Length       2 B  0x0040
+#     +0x0A  Reserved           6 B  zero
+#     +0x10  Flags              4 B  zero
+#     +0x14  Entry Type         2 B  0x0001
+#     +0x16  File Name Prefix   2 B  0x000F
+#     +0x18  Dump File Name    40 B  SYSDUMP.<serial>.<id>.<YYYYMMDDhhmmss>
+#
+#   SYS DUMP Summary (base 0x00D0):
+#     +0x008  Dump Request Time  8 B  BCD timestamp from BMC dump entry
+#     +0x010  Dump Identifier    4 B  binary dump-manager id
+#     +0x040  System Name       32 B  ASCII system name from BMC targeting
+#     +0x068  System Log ID/EID  4 B  associated error EID
+#     +0x06C  File Header Size   2 B  0x00D0 (fixed PAPR directory length)
+#     +0x1B0  BMC Serial Number 12 B  NUL-padded BMC serial
+#     +0x1BC  Originator Type    4 B  ASCII/NUL originator code
+#     +0x1C0  Originator ID     32 B  NUL-padded ASCII originator identifier
+#
+# @param[in] header_file  path to the binary header file to patch in-place
+#
+function override_mpipl_phal_header_fields() {
+    local header_file="$1"
+
+    if [[ -z "$header_file" || ! -f "$header_file" ]]; then
+        echo "override_mpipl_phal_header_fields: invalid header file '$header_file'"
+        return "$INTERNAL_FAILURE"
+    fi
+
+    # ------------------------------------------------------------------ #
+    # Helper: write raw bytes at a byte offset inside the file.           #
+    # Uses dd conv=notrunc to patch without truncating the file.          #
+    # ------------------------------------------------------------------ #
+
+    # @brief write_bytes_at <offset> <byte_string>
+    # byte_string is a sequence of \xHH escape sequences (printf format).
+    write_bytes_at() {
+        local offset="$1"
+        local byte_string="$2"
+        # shellcheck disable=SC2059
+        printf "$byte_string" \
+            | dd of="$header_file" bs=1 seek="$offset" 2>/dev/null
+    }
+
+    # @brief write_ascii_padded <offset> <width> <string>
+    # Writes <string> NUL-padded to exactly <width> bytes at <offset>.
+    write_ascii_padded() {
+        local offset="$1"
+        local width="$2"
+        local str="$3"
+        # Truncate to width if needed, then NUL-pad
+        local trimmed="${str:0:$width}"
+        local pad=$(( width - ${#trimmed} ))
+        {
+            printf '%s' "$trimmed"
+            if (( pad > 0 )); then
+                printf '%*s' "$pad" '' | tr ' ' '\0'
+            fi
+        } | dd of="$header_file" bs=1 seek="$offset" 2>/dev/null
+    }
+
+    # ------------------------------------------------------------------
+    # 1.  PAPR FILE Directory entry (absolute offset 0x0000-0x003F)
+    # ------------------------------------------------------------------
+
+    # Entry Header: 8 bytes ASCII 'FILE    '
+    write_ascii_padded 0 8 "FILE    "
+
+    # Entry Length: 2 bytes BE 0x0040
+    write_bytes_at 8 '\x00\x40'
+
+    # Reserved: 6 bytes zero
+    write_bytes_at 10 '\x00\x00\x00\x00\x00\x00'
+
+    # Flags: 4 bytes zero
+    write_bytes_at 16 '\x00\x00\x00\x00'
+
+    # Entry Type: 2 bytes 0x0001
+    write_bytes_at 20 '\x00\x01'
+
+    # File Name Prefix Length: 2 bytes 0x000F (covers 'SYSDUMP.' + 7-char serial)
+    write_bytes_at 22 '\x00\x0F'
+
+    # Dump File Name: 40 bytes NUL-terminated ASCII
+    # Format: SYSDUMP.<serial>.<dump_id>.<YYYYMMDDhhmmss>
+    local file_name="SYSDUMP.${serialNo}.${dump_id}.${dDay}"
+    write_ascii_padded 24 40 "$file_name"
+
+    # ------------------------------------------------------------------
+    # 2.  SYS DUMP Summary PHAL-owned fields
+    #     Summary base is at absolute file offset 0x00D0 (208 decimal).
+    # ------------------------------------------------------------------
+    local SUM=208   # 0x00D0 decimal
+
+    # Dump Request Time: 8 bytes BCD at summary+0x008
+    # dDay is already YYYYMMDDhhmmss — encode as BCD pairs
+    local bcd_offset=$(( SUM + 8 ))
+    local ts="$dDay"
+    local bcd_bytes=""
+    local i
+    for (( i=0; i<${#ts}; i+=2 )); do
+        bcd_bytes="${bcd_bytes}\\x${ts:$i:2}"
+    done
+    # pad to 8 bytes with null if necessary
+    local pad_bytes=$(( 8 - ${#ts} / 2 ))
+    local p
+    for (( p=0; p<pad_bytes; p++ )); do
+        bcd_bytes="${bcd_bytes}\\x00"
+    done
+    echo "DEBUG: writing BCD timestamp at offset $bcd_offset: $bcd_bytes"
+    # shellcheck disable=SC2059
+    printf "$bcd_bytes" \
+        | dd of="$header_file" bs=1 seek="$bcd_offset" 2>/dev/null
+    echo "DEBUG: BCD timestamp write rc=$?"
+
+    # Dump Identifier: 4 bytes binary at summary+0x010
+    # dump_id is an 8-hex-char string; convert to 4 binary bytes
+    local id_offset=$(( SUM + 16 ))
+    local id_hex
+    id_hex=$(printf '%08X' "0x${dump_id}" 2>/dev/null || printf '00000000')
+    local id_bytes=""
+    for (( i=0; i<8; i+=2 )); do
+        id_bytes="${id_bytes}\\x${id_hex:$i:2}"
+    done
+    echo "DEBUG: writing dump id at offset $id_offset: $id_bytes"
+    # shellcheck disable=SC2059
+    printf "$id_bytes" \
+        | dd of="$header_file" bs=1 seek="$id_offset" 2>/dev/null
+    echo "DEBUG: dump id write rc=$?"
+
+    # System Name: 32 bytes NUL-padded ASCII at summary+0x040
+    local sysname_offset=$(( SUM + 64 ))
+    local sysname
+    sysname=$(hostname 2>/dev/null || echo "")
+    echo "DEBUG: writing sysname '$sysname' at offset $sysname_offset"
+    write_ascii_padded "$sysname_offset" 32 "$sysname"
+    echo "DEBUG: sysname write rc=$?"
+
+    # System Log Identifier / EID: 4 bytes at summary+0x068
+    local eid_offset=$(( SUM + 104 ))
+    echo "DEBUG: eid_offset=$eid_offset elog_id='$elog_id' len=${#elog_id}"
+    if [[ "${#elog_id}" -eq 8 ]]; then
+        local eid_bytes=""
+        for (( i=0; i<8; i+=2 )); do
+            eid_bytes="${eid_bytes}\\x${elog_id:$i:2}"
+        done
+        echo "DEBUG: writing EID bytes at offset $eid_offset: $eid_bytes"
+        # shellcheck disable=SC2059
+        printf "$eid_bytes" \
+            | dd of="$header_file" bs=1 seek="$eid_offset" 2>/dev/null
+        echo "DEBUG: EID write rc=$?"
+    else
+        write_bytes_at "$eid_offset" '\x00\x00\x00\x00'
+        echo "DEBUG: EID zeroed rc=$?"
+    fi
+
+    # File Header Size: 2 bytes 0x00D0 at summary+0x06C
+    local fhsize_offset=$(( SUM + 108 ))
+    write_bytes_at "$fhsize_offset" '\x00\xD0'
+
+    # BMC Serial Number: 12 bytes NUL-padded at summary+0x1B0
+    local bmcser_offset=$(( SUM + 432 ))
+    local bmc_serial
+    bmc_serial=$(busctl call xyz.openbmc_project.Inventory.Manager \
+        /xyz/openbmc_project/inventory/system/chassis/motherboard \
+        org.freedesktop.DBus.Properties Get ss \
+        xyz.openbmc_project.Inventory.Decorator.Asset SerialNumber \
+        2>/dev/null | cut -d ' ' -f 3 | sed 's/\"//g' || echo "")
+    write_ascii_padded "$bmcser_offset" 12 "$bmc_serial"
+
+    # Originator Type: 4 bytes at summary+0x1BC
+    local origtype_offset=$(( SUM + 444 ))
+    write_ascii_padded "$origtype_offset" 4 "$ORIGINATOR_TYPE"
+
+    # Originator ID: 32 bytes at summary+0x1C0
+    local origid_offset=$(( SUM + 448 ))
+    write_ascii_padded "$origid_offset" 32 "$ORIGINATOR_ID"
+
+    echo "PHAL-owned MPIPL header fields overridden in $header_file"
+    return "$SUCCESS"
+}
+
+# @brief Package an MPIPL system dump.
+#
+# The raw MPIPL dump file (mpipl_src) has already been fully written and
+# closed by the Hostboot/MPIPL collection agent with its own PAPR directory
+# and SYS DUMP summary embedded at offset 0.  This function:
+#   1. Fetches the system serial number (sets $serialNo).
+#   2. Renames the raw file to the canonical PAPR form inside the staging dir:
+#        SYSDUMP.<serial>.<dump_id>.<YYYYMMDDhhmmss>
+#   3. Overrides all PHAL-owned fields in the embedded header in-place.
+#      All dd(1) patches stay in the staging dir — outside the watched tree —
+#      so the dump manager never observes a partially-patched file.
+#   4. Creates the per-dump subdirectory <dump_dir>/<dump_id>/.
+#      openpower::dump::Manager watches opdump/ (OP_DUMP_PATH) with
+#      IN_CREATE|IN_CLOSE_WRITE.  The IN_CREATE on the new subdir causes
+#      it to install a child Watch(IN_CLOSE_WRITE | IN_MOVED_TO) on it.
+#   5. Moves the finished file into that subdirectory.
+#      mv generates IN_MOVED_TO on the child Watch → updateEntry() called
+#      → status transitions to Completed.
+#      DumpMonitor is NOT re-triggered: it listens for InterfacesAdded
+#      (new entry creation), not PropertiesChanged; updateEntry() emits
+#      only PropertiesChanged.
+#
+# Note: gendumpheader is NOT called — the header is already in the file.
+# Note: get_originator_details is NOT called here — initialize() returns
+#       early when mpipl_src is set; ORIGINATOR_TYPE/ID are left empty.
+# Note: the file is patched in-place under its original name; the rename to
+#       the canonical SYSDUMP.* name happens as part of the final mv into
+#       dest_dir to avoid triggering a second IN_CLOSE_WRITE in the staging dir.
+#
+function package_mpipl() {
+    echo "DEBUG package_mpipl: entry mpipl_src='$mpipl_src' dump_id='$dump_id' dump_dir='$dump_dir'"
+
+    # Sanity-check the source file provided by the inotify monitor.
+    if [[ -z "$mpipl_src" || ! -f "$mpipl_src" ]]; then
+        echo "package_mpipl: MPIPL source file not found: '$mpipl_src'"
+        return "$RESOURCE_UNAVAILABLE"
+    fi
+    echo "DEBUG package_mpipl: source file exists, size=$(stat -c%s "$mpipl_src" 2>/dev/null)"
+
+    # Fetch the system serial number (sets $serialNo via opfunctions).
+    fetch_serial_number
+    echo "DEBUG package_mpipl: serialNo='$serialNo'"
+
+    # Derive the canonical PAPR filename — do NOT rename inside the staging
+    # dir.  A rename (mv) within the staging dir triggers a second
+    # IN_CLOSE_WRITE on the new name, causing handleMpiplFile to fire again.
+    # Instead: patch the file in-place under its original name, then do the
+    # rename as part of the final mv into dest_dir (different filesystem dir),
+    # which only fires IN_MOVED_TO on dest_dir — never on the staging dir.
+    name="SYSDUMP.${serialNo}.${dump_id}.${dDay}"
+
+    # Patch PHAL-owned header fields in-place in the staging dir.
+    echo "DEBUG package_mpipl: calling override_mpipl_phal_header_fields"
+    override_mpipl_phal_header_fields "$mpipl_src"
+    local rc=$?
+    echo "DEBUG package_mpipl: override_mpipl_phal_header_fields rc=$rc"
+    if [[ $rc -ne $SUCCESS ]]; then
+        echo "package_mpipl: failed to override PHAL header fields rc=$rc"
+        rm -f "$mpipl_src"
+        return "$INTERNAL_FAILURE"
+    fi
+
+    # Create the per-dump subdirectory: opdump/<dump_id>/
+    # The dump manager's top-level Watch sees IN_CREATE on this new dir and
+    # installs a child Watch(IN_CLOSE_WRITE | IN_MOVED_TO) on it.
+    local dest_dir="${dump_dir}/${dump_id}"
+    echo "DEBUG package_mpipl: dest_dir='$dest_dir' exists=$([ -d "$dest_dir" ] && echo yes || echo no)"
+    if ! mkdir -p "$dest_dir"; then
+        echo "package_mpipl: could not create destination directory $dest_dir"
+        rm -f "$mpipl_src"
+        return "$INTERNAL_FAILURE"
+    fi
+    echo "DEBUG package_mpipl: dest_dir created ok"
+
+    # Atomic mv: original staging path → dest_dir/canonical-name.
+    # This single cross-directory mv fires IN_MOVED_TO on dest_dir only —
+    # nothing is ever renamed inside the staging dir so mpiplWatch is silent.
+    echo "DEBUG package_mpipl: moving '$mpipl_src' -> '${dest_dir}/${name}'"
+    if ! mv "$mpipl_src" "${dest_dir}/${name}"; then
+        echo "package_mpipl: could not move to ${dest_dir}/${name}"
+        return "$INTERNAL_FAILURE"
+    fi
+    echo "DEBUG package_mpipl: move ok"
+
+    echo "MPIPL dump packaged: ${dest_dir}/${name}"
+    return "$SUCCESS"
 }
 
 # @brief Package the dump and transfer to dump location
@@ -248,6 +543,21 @@ function main() {
         return "$INTERNAL_FAILURE"
     fi
 
+    echo "DEBUG main: mpipl_src='$mpipl_src' dump_id='$dump_id' dump_dir='$dump_dir'"
+    if [[ -n "$mpipl_src" ]]; then
+        # MPIPL path: raw file already written by Hostboot; skip collect,
+        # go straight to MPIPL-specific packaging.
+        package_mpipl
+        result=$?
+        echo "DEBUG main: package_mpipl returned $result"
+        if [[ $result -ne $SUCCESS ]]; then
+            echo "$($TIME_STAMP)" "Error: Failed to package MPIPL dump, Exiting rc=$result"
+            return "$INTERNAL_FAILURE"
+        fi
+        echo "$($TIME_STAMP)" "MPIPL dump packaging completed successfully"
+        return "$SUCCESS"
+    fi
+
     collect
     result=$?
     if [[ $result -ne $SUCCESS ]]; then
@@ -269,7 +579,7 @@ function main() {
 }
 
 if ! TEMP=$(getopt -o n:d:i:s:t:e:f:p:b:h \
-        --long name:,dir:,dumpid:,size:,type:,eid:,failingunit:,precollected_dump_path:,sbe-dump-subtype:,help \
+        --long name:,dir:,dumpid:,size:,type:,eid:,failingunit:,precollected_dump_path:,sbe-dump-subtype:,mpipl-src:,help \
         -- "$@"); then
     echo "Error: Invalid options"
     exit 1
@@ -308,6 +618,9 @@ while [[ $# -gt 1 ]]; do
             sbe_subtype=$2
             # Strip enum prefix if present (e.g., "com.ibm.Dump.Create.SBEDumpTriggerType.BootFailure" -> "BootFailure")
             sbe_subtype=${sbe_subtype##*.}
+            shift 2 ;;
+        --mpipl-src)
+            mpipl_src=$2
             shift 2 ;;
         -h|--help)
             echo "$help"

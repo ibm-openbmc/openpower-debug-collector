@@ -196,6 +196,15 @@ void DumpMonitor::initiateDumpCollection(const std::string& path,
     using namespace sdbusplus::common::xyz::openbmc_project::dump::entry;
     if (intf == System::interface)
     {
+        // DUMP_SKIP_GUARDS=1: skip MPIPL trigger for testing purposes.
+        if (std::getenv("DUMP_SKIP_GUARDS") != nullptr)
+        {
+            lg2::info("DUMP_SKIP_GUARDS set — skipping MPIPL trigger for "
+                      "system dump {PATH}",
+                      "PATH", path);
+            return;
+        }
+
         // Find the SystemImpact property, if this property is not
         // available assume disruptive.
         auto systemImpactIt = properties.find("SystemImpact");
