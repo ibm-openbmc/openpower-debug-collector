@@ -78,6 +78,7 @@ Examples:
 
 ```bash
 dumptool create --type bmc
+dumptool create --type system
 
 dumptool create --type hostboot \
     --error-id 0x1234ABCD
