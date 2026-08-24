@@ -130,6 +130,7 @@ class DumpInfo:
     ended_time_us: Optional[int] = None
     operation_status: Optional[str] = None
     error_log_id: Optional[int] = None
+    pel_id: Optional[int] = None  # org.open_power.Logging.PEL.PELID
     failing_unit_id: Optional[int] = None
     dump_files_path: Optional[str] = None
     sbe_dump_trigger_type: Optional[str] = None
@@ -188,6 +189,7 @@ class DumpInfo:
             "started_time_us": self.started_time_us,
             "ended_time_us": self.ended_time_us,
             "error_log_id": self.error_log_id,
+            "pel_id": self.pel_id,
             "failing_unit_id": self.failing_unit_id,
             "dump_files_path": self.dump_files_path,
             "sbe_dump_trigger_type": self.sbe_dump_trigger_type,

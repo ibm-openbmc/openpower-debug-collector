@@ -174,6 +174,7 @@ def _print_dump_info(info):
         print(
             f"Error Log ID : 0x{info.error_log_id:08X} ({info.error_log_id})"
         )
+    print(f"PEL ID       : {hex(info.pel_id) if info.pel_id else 'N/A'}")
     if info.failing_unit_id is not None:
         print(f"Failing Unit : {info.failing_unit_id}")
     if info.sbe_dump_trigger_type is not None:

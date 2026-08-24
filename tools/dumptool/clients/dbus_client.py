@@ -286,7 +286,10 @@ class DBusClient:
         dump_type = DumpType.from_path(object_path)
         subtype = get_subtype(introspection)
 
+        PELID_IFACE = "org.open_power.Logging.PEL.PELID"
+
         error_log_id = None
+        pel_id = None
         failing_unit_id = None
         dump_files_path = None
         sbe_dump_trigger_type = None
@@ -303,6 +306,12 @@ class DBusClient:
                 subtype_interface,
                 optional=True,
             )
+
+        # Read PELID from the new interface (available on all dump types that
+        # carry an error-log association, including system dumps)
+        pel_id = get_property("PELID", PELID_IFACE, optional=True)
+        if pel_id == 0:
+            pel_id = None
         if subtype in ("hardware", "sbe", "memory-buffer-sbe"):
             failing_unit_id = get_property(
                 "FailingUnitId",
@@ -335,6 +344,7 @@ class DBusClient:
             ended_time_us=ended_time_raw,
             operation_status=status_raw,
             error_log_id=error_log_id,
+            pel_id=pel_id,
             failing_unit_id=failing_unit_id,
             dump_files_path=dump_files_path,
             sbe_dump_trigger_type=sbe_dump_trigger_type,
