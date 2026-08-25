@@ -568,6 +568,238 @@ function plat_dump_header() {
 }
 
 
+# ---------------------------------------------------------------------------
+# MPIPL packaging
+# ---------------------------------------------------------------------------
+
+# @brief Build the final MPIPL dump file with patched PHAL-owned header fields.
+#
+# The raw MPIPL file written by Hostboot already contains a 688-byte header
+# (PAPR FILE Directory at 0x000 + SYS DUMP Summary at 0x0D0, last PHAL field
+# ends at 0x0D0+0x1C0+32 = 0x2B0 = 688).  PHAL must override specific fields
+# in that header before handing the file to the dump manager.
+#
+# Strategy (avoids any in-place patching):
+#   1. Extract the 688-byte header from the raw file into a /tmp temp file.
+#   2. Use Python3 to patch the PHAL-owned fields in that temp copy.
+#   3. Concatenate patched header + remainder of raw file into out_file.
+#   4. Remove temp files.  The raw source file is left untouched.
+#
+# The temp files go to /tmp — not the staging dir — so inotify on the
+# staging dir is never triggered.  out_file is written directly to
+# dest_dir (under opdump/<id>/) which triggers IN_CLOSE_WRITE on the
+# dump manager's child watch → updateEntry() → entry Completed.
+#
+#   PAPR FILE Directory (0x000–0x03F):
+#     +0x00  Entry Header       8 B  ASCII 'FILE    '
+#     +0x08  Entry Length       2 B  0x0040
+#     +0x0A  Reserved           6 B  zero
+#     +0x10  Flags              4 B  zero
+#     +0x14  Entry Type         2 B  0x0001
+#     +0x16  File Name Prefix   2 B  0x000F
+#     +0x18  Dump File Name    40 B  SYSDUMP.<serial>.<id>.<YYYYMMDDhhmmss>
+#
+#   SYS DUMP Summary (base 0x0D0 = 208):
+#     +0x008  Dump Request Time  8 B  BCD timestamp
+#     +0x010  Dump Identifier    4 B  binary dump-manager id
+#     +0x040  System Name       32 B  ASCII hostname
+#     +0x068  System Log ID/EID  4 B  associated error EID
+#     +0x06C  File Header Size   2 B  0x00D0
+#     +0x1B0  BMC Serial Number 12 B  NUL-padded BMC serial
+#     +0x1BC  Originator Type    4 B  ASCII/NUL originator code
+#     +0x1C0  Originator ID     32 B  NUL-padded ASCII originator id
+#
+# @param[in]  src_file  raw MPIPL dump file (not modified)
+# @param[out] out_file  destination for the reassembled dump
+#
+function build_mpipl_dump_header() {
+    local src_file="$1"
+    local out_file="$2"
+
+    # The header block is exactly 688 bytes (0x2B0):
+    #   SUM(208) + last-field-offset(0x1C0=448) + last-field-width(32) = 688
+    local HDR_SIZE=688
+
+    local src_size
+    src_size=$(stat -c%s "$src_file")
+    if (( src_size < HDR_SIZE )); then
+        echo "build_mpipl_dump_header: file too small ($src_size < $HDR_SIZE)"
+        return 1
+    fi
+
+    local tmp_hdr
+    tmp_hdr=$(mktemp /tmp/mpipl_hdr.XXXXXX)
+
+    # Extract the header into the temp file.
+    dd if="$src_file" of="$tmp_hdr" bs=1 count="$HDR_SIZE" 2>/dev/null
+
+    # bmcSerialNo is already set by get_bmc_model_serial_number() which is
+    # called unconditionally from gen_mpipl_package() before reaching here.
+    local bmc_serial="${bmcSerialNo}"
+
+    local sysname
+    sysname=$(hostname 2>/dev/null || true)
+
+    local file_name="SYSDUMP.${serialNo}.${dump_id}.${dDay}"
+
+    # Patch the PHAL-owned fields in the temp header using Python3.
+    python3 - "$tmp_hdr" \
+        "$file_name" \
+        "$dDay" \
+        "$dump_id" \
+        "$sysname" \
+        "$elog_id" \
+        "$bmc_serial" \
+        "$ORIGINATOR_TYPE" \
+        "$ORIGINATOR_ID" \
+        "$serialNo" \
+        << 'PYEOF'
+import sys, struct
+
+hdr_path  = sys.argv[1]
+file_name = sys.argv[2]   # SYSDUMP.<serial>.<id>.<ts>
+dday      = sys.argv[3]   # YYYYMMDDhhmmss (14 digits)
+dump_id   = sys.argv[4]   # 8 hex chars e.g. A0000001
+sysname   = sys.argv[5]
+elog_id   = sys.argv[6]   # 8 hex chars or empty/short
+bmc_ser   = sys.argv[7]
+orig_type = sys.argv[8]
+orig_id   = sys.argv[9]
+serial_no = sys.argv[10]  # 7-char system serial number
+
+SUM = 0xD0  # SYS DUMP Summary base offset
+
+def put(buf, offset, data):
+    buf[offset:offset + len(data)] = data
+
+def ascii_pad(s, width):
+    b = s.encode('ascii', errors='replace')[:width]
+    return b + b'\x00' * (width - len(b))
+
+def bcd_pad(digits, width):
+    out = bytearray()
+    for i in range(0, len(digits), 2):
+        out.append(int(digits[i:i+2], 10))
+    out += b'\x00' * (width - len(out))
+    return bytes(out[:width])
+
+with open(hdr_path, 'r+b') as f:
+    buf = bytearray(f.read())
+
+# PAPR FILE Directory
+put(buf, 0x00, ascii_pad('FILE    ', 8))
+put(buf, 0x08, b'\x00\x40')
+put(buf, 0x0A, b'\x00' * 6)
+put(buf, 0x10, b'\x00' * 4)
+put(buf, 0x14, b'\x00\x01')
+put(buf, 0x16, b'\x00\x0F')
+put(buf, 0x18, ascii_pad(file_name, 40))
+
+# SYS DUMP Summary — PHAL-owned fields
+put(buf, SUM + 0x008, bcd_pad(dday, 8))
+put(buf, SUM + 0x010, struct.pack('>I', int(dump_id, 16)))
+put(buf, SUM + 0x040, ascii_pad(sysname, 32))
+put(buf, SUM + 0x060, ascii_pad(serial_no, 7))
+if len(elog_id) == 8:
+    put(buf, SUM + 0x068, bytes.fromhex(elog_id))
+else:
+    put(buf, SUM + 0x068, b'\x00' * 4)
+put(buf, SUM + 0x06C, b'\x00\xD0')
+put(buf, SUM + 0x1B0, ascii_pad(bmc_ser, 12))
+put(buf, SUM + 0x1BC, ascii_pad(orig_type, 4))
+put(buf, SUM + 0x1C0, ascii_pad(orig_id, 32))
+
+with open(hdr_path, 'wb') as f:
+    f.write(buf)
+PYEOF
+
+    local rc=$?
+    if [[ $rc -ne 0 ]]; then
+        echo "build_mpipl_dump_header: Python header patch failed (rc=$rc)"
+        rm -f "$tmp_hdr"
+        return 1
+    fi
+
+    # Concatenate patched header + body (bytes after HDR_SIZE) → out_file.
+    # This is a single write that produces one IN_CLOSE_WRITE event.
+    {
+        cat "$tmp_hdr"
+        dd if="$src_file" bs=1 skip="$HDR_SIZE" 2>/dev/null
+    } > "$out_file"
+    rc=$?
+    rm -f "$tmp_hdr"
+
+    if [[ $rc -ne 0 ]]; then
+        echo "build_mpipl_dump_header: failed to write '$out_file'"
+        rm -f "$out_file"
+        return 1
+    fi
+
+    echo "build_mpipl_dump_header: wrote '$out_file' ($(stat -c%s "$out_file") bytes)"
+    return 0
+}
+
+# @brief Package an MPIPL system dump.
+#
+# Called from gen_mpipl_package() when --mpipl-src is set.  Expects the
+# following variables to be set by the caller (opdreport):
+#   mpipl_src  — path to the raw Hostboot dump file
+#   dump_id    — 8-hex-char dump manager entry id (e.g. A0000001)
+#   dump_dir   — destination base directory (opdump/)
+#   serialNo   — system serial number (set by fetch_serial_number)
+#   dDay       — timestamp string YYYYMMDDhhmmss
+#   elog_id    — 8-hex-char EID or "00000000"
+#   ORIGINATOR_TYPE / ORIGINATOR_ID — from get_originator_details
+#
+# The raw staging file is removed after successful packaging.
+#
+function package_mpipl() {
+    if [[ -z "$mpipl_src" || ! -f "$mpipl_src" ]]; then
+        echo "package_mpipl: MPIPL source file not found: '$mpipl_src'"
+        return 1
+    fi
+
+    fetch_serial_number
+    fetch_pel_id
+    get_originator_details "system"
+
+    local dump_name="SYSDUMP.${serialNo}.${dump_id}.${dDay}"
+
+    # Create the per-dump subdirectory: opdump/<dump_id>/
+    # The dump manager's top-level Watch sees IN_CREATE on this new dir
+    # and installs a child Watch(IN_CLOSE_WRITE | IN_MOVED_TO) on it.
+    local dest_dir="${dump_dir}/${dump_id}"
+    if ! mkdir -p "$dest_dir"; then
+        echo "package_mpipl: could not create destination directory $dest_dir"
+        rm -f "$mpipl_src"
+        return 1
+    fi
+
+    # Build reassembled dump directly into dest_dir.
+    # Writing here triggers IN_CLOSE_WRITE on the child watch →
+    # updateEntry() → entry Completed.
+    local out_file="${dest_dir}/${dump_name}"
+    build_mpipl_dump_header "$mpipl_src" "$out_file"
+    local rc=$?
+
+    rm -f "$mpipl_src"
+
+    if [[ $rc -ne 0 ]]; then
+        echo "package_mpipl: build_mpipl_dump_header failed rc=$rc"
+        rm -f "$out_file"
+        return 1
+    fi
+
+    echo "MPIPL dump packaged: $out_file"
+    return 0
+}
+
+# @brief Entry point called by gendumpheader for MPIPL dumps.
+function gen_mpipl_package() {
+    get_bmc_model_serial_number
+    package_mpipl
+}
+
 #main function
 function gen_header_package() {
     fetch_serial_number
@@ -585,5 +817,10 @@ function gen_header_package() {
 
 get_bmc_model_serial_number
 
-#Run gen_header_package
-gen_header_package
+# Route to MPIPL packaging when --mpipl-src is set, otherwise run the
+# standard header generation path.
+if [[ -n "$mpipl_src" ]]; then
+    gen_mpipl_package
+else
+    gen_header_package
+fi

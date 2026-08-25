@@ -15,7 +15,7 @@ if phal_backend != 'none'
 else
     collect_deps = [CLI11_dep, sdbusplus_dep, phosphorlogging]
 endif
-monitor_deps = [sdbusplus_dep, phosphorlogging]
+monitor_deps = [dependency('libsystemd'), sdbusplus_dep, phosphorlogging]
 
 # source files
 

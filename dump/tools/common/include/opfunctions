@@ -50,6 +50,28 @@ function get_bmc_dump_filename() {
     fi
 }
 
+# @brief Fetch the PEL ID associated with the system dump entry and store it
+#        in $elog_id as an 8-character uppercase hex string.
+#        Falls back to "00000000" if the property is absent or zero.
+function fetch_pel_id() {
+    local DBUS_DUMP_MANAGER="xyz.openbmc_project.Dump.Manager"
+    local DBUS_DUMP_PATH="/xyz/openbmc_project/dump/system/entry/$dump_id"
+    local DBUS_PEL_IFACE="org.open_power.Logging.PEL.PELID"
+    local DBUS_PEL_PROP="PELID"
+
+    local raw
+    raw=$(busctl get-property "$DBUS_DUMP_MANAGER" \
+            "$DBUS_DUMP_PATH" "$DBUS_PEL_IFACE" "$DBUS_PEL_PROP" 2>/dev/null \
+        | cut -d' ' -f2)
+
+    # raw is a decimal uint32 e.g. "2703691732"; convert to 8-char hex.
+    if [[ "$raw" =~ ^[0-9]+$ && "$raw" != "0" ]]; then
+        elog_id=$(printf "%08X" "$raw")
+    else
+        elog_id="00000000"
+    fi
+}
+
 # @brief Function to get the Originator details
 # @param Originator Type and Originator ID
 function get_originator_details() {

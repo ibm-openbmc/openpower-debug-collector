@@ -1,15 +1,18 @@
 #include "dump_monitor.hpp"
 
-#include <sdbusplus/bus.hpp>
-#include <sdbusplus/bus/match.hpp>
-
 #include <exception>
 #include <iostream>
-#include <variant>
 
 int main()
 {
-    openpower::dump::DumpMonitor monitor;
-    monitor.run();
-    return 0;
+    try
+    {
+        openpower::dump::DumpMonitor monitor;
+        return monitor.run();
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "openpower-dump-monitor: fatal: " << e.what() << "\n";
+        return 1;
+    }
 }
