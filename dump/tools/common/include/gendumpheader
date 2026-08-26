@@ -35,6 +35,12 @@ declare -x modelNo
 modelNo=$(busctl get-property $INVENTORY_MANAGER $INVENTORY_PATH \
     $INVENTORY_ASSET_INT Model | cut -d " " -f 2 | sed "s/^\(\"\)\(.*\)\1\$/\2/g")
 
+if [[ -z "$modelNo" || "$modelNo" == '""' || \
+      ! "$modelNo" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    modelNo="00000000"
+fi
+modelNo="${modelNo:0:8}"
+
 #Variables
 declare -x serialNo="0000000"
 
@@ -44,6 +50,12 @@ declare -x bmcSerialNo
 bmcSerialNo=$(busctl call $INVENTORY_MANAGER $INVENTORY_BMC_BOARD \
         org.freedesktop.DBus.Properties Get ss $INVENTORY_ASSET_INT \
     SerialNumber | cut -d " " -f 3 | sed "s/^\(\"\)\(.*\)\1\$/\2/g")
+if [[ -z "$bmcSerialNo" || "$bmcSerialNo" == '""' || \
+      ! "$bmcSerialNo" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    bmcSerialNo="000000000000"
+fi
+# Truncate to 12 chars max; getbmc_serial() null-pads the remainder.
+bmcSerialNo="${bmcSerialNo:0:12}"
 
 #Source common functions
 . $DREPORT_INCLUDE/opfunctions
@@ -139,7 +151,7 @@ function get_dump_id() {
 function getbmc_serial() {
     x=${#bmcSerialNo}
     nulltoadd=`expr $SIZE_12 - $x`
-    printf $bmcSerialNo >> $FILE
+    printf "%s" "$bmcSerialNo" >> $FILE
     printf '%*s' $nulltoadd | tr ' ' "0" >> $FILE
 }
 
@@ -266,17 +278,21 @@ function get_bmc_model_serial_number() {
     modelNo=$(busctl get-property $INVENTORY_MANAGER $INVENTORY_PATH \
         $INVENTORY_ASSET_INT Model | cut -d " " -f 2 | sed "s/^\(\"\)\(.*\)\1\$/\2/g")
 
-    if [ -z "$modelNo" ]; then
+    if [[ -z "$modelNo" || "$modelNo" == '""' || \
+          ! "$modelNo" =~ ^[A-Za-z0-9_-]+$ ]]; then
         modelNo="00000000"
     fi
+    modelNo="${modelNo:0:8}"
 
     bmcSerialNo=$(busctl call $INVENTORY_MANAGER $INVENTORY_BMC_BOARD \
             org.freedesktop.DBus.Properties Get ss $INVENTORY_ASSET_INT \
         SerialNumber | cut -d " " -f 3 | sed "s/^\(\"\)\(.*\)\1\$/\2/g")
 
-    if [ -z "$bmcSerialNo" ]; then
+    if [[ -z "$bmcSerialNo" || "$bmcSerialNo" == '""' || \
+          ! "$bmcSerialNo" =~ ^[A-Za-z0-9_-]+$ ]]; then
         bmcSerialNo="000000000000"
     fi
+    bmcSerialNo="${bmcSerialNo:0:12}"
 }
 
 #Function to add virtual file directory entry, consists of below entries
@@ -393,11 +409,11 @@ function dump_header() {
     printf '\x02' >> $FILE #Dump header size 0x0200
     add_null 1
     dump_size  #dump size
-    printf "$modelNo" >> "$FILE"
-    add_null 24
+    printf "%s" "$modelNo" >> "$FILE"
+    add_null $(( 32 - ${#modelNo} ))   # panel function: 32 bytes total
     printf "Server-%s-SN%s" "$modelNo" "$serialNo" >> "$FILE"
-    add_null 7
-    printf "$serialNo" >> "$FILE"
+    add_null $(( 32 - 7 - ${#modelNo} - 3 - ${#serialNo} ))  # system name: 32 bytes total
+    printf "%s" "$serialNo" >> "$FILE"
     add_null 1
     get_eid
     add_null 1
@@ -553,7 +569,7 @@ function plat_dump_header() {
     add_null 1
     total_size
     printf "%s" "$modelNo" >> "$FILE"
-    add_null 24
+    add_null $(( 32 - ${#modelNo} ))   # panel function: 32 bytes total
     system_name
     printf "%s" "$serialNo" >> "$FILE"
     printf '\x01' >> "$FILE"   #Dump Creator BMC
