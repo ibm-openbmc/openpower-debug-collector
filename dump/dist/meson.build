@@ -33,6 +33,14 @@ configure_file(
   install_dir: systemd_system_unit_dir
 )
 
+configure_file(
+    input: 'clear_systemdumps_mpipl_poweroff.service',
+    output: 'clear_systemdumps_mpipl_poweroff.service',
+    configuration: dist_conf_data,
+    install: true,
+    install_dir: systemd_system_unit_dir,
+)
+
 # Symlinks for services
 systemd_alias = [
     ['../openpower-dump-monitor.service',
@@ -49,7 +57,14 @@ systemd_alias += [
      'obmc-host-stop@0.target.wants/clear_resourcedumps_poweroff.service']
 ]
 
-foreach service: systemd_alias
+systemd_alias += [
+    [
+        '../clear_systemdumps_mpipl_poweroff.service',
+        'obmc-host-stop@0.target.wants/clear_systemdumps_mpipl_poweroff.service',
+    ],
+]
+
+foreach service : systemd_alias
     meson.add_install_script(
         'sh', '-c',
         'mkdir -p $(dirname $DESTDIR/@0@/@1@)'.format(
