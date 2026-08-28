@@ -22,6 +22,16 @@
 namespace openpower::dump
 {
 
+// D-Bus enum values for SBE dump trigger types
+constexpr std::string_view SBE_DUMP_TRIGGER_BOOTFAILURE =
+    "com.ibm.Dump.Create.SBEDumpTriggerType.BootFailure";
+constexpr std::string_view SBE_DUMP_TRIGGER_TIMEOUT =
+    "com.ibm.Dump.Create.SBEDumpTriggerType.Timeout";
+
+// Bare trigger type values (after stripping enum prefix)
+constexpr std::string_view TRIGGER_BOOTFAILURE = "BootFailure";
+constexpr std::string_view TRIGGER_TIMEOUT = "Timeout";
+
 constexpr auto dumpOutPath = "/var/lib/phosphor-debug-collector/opdump";
 constexpr auto dumpStatusFailed =
     "xyz.openbmc_project.Common.Progress.OperationStatus.Failed";
@@ -394,22 +404,52 @@ void DumpMonitor::executeCollectionScript(
         args.push_back(std::to_string(failingUnitId));
     }
 
-    // For SBE BootFailure dumps
+    // Inspect SBEDumpTriggerType and route based on trigger type.
+    // Pass trigger type to opdreport and collect dumps as needed.
+    // If no trigger type is specified, proceed without the -b flag
+    // (will use default behavior).
     auto sbeTriggerTypeIt = properties.find("SBEDumpTriggerType");
+
     if (sbeTriggerTypeIt != properties.end())
     {
-        std::string triggerType =
+        std::string fullTriggerType =
             std::get<std::string>(sbeTriggerTypeIt->second);
-        args.push_back("-b");
-        args.push_back(triggerType);
-    }
 
-    auto dumpFilesPathIt = properties.find("DumpFilesPath");
-    if (dumpFilesPathIt != properties.end())
-    {
-        std::string filesPath = std::get<std::string>(dumpFilesPathIt->second);
-        args.push_back("-p");
-        args.push_back(filesPath);
+        // Pass the trigger type to opdreport via -b flag
+        // Extract bare trigger type for logging and comparison
+        std::string_view triggerTypeView(fullTriggerType);
+        size_t lastDot = triggerTypeView.rfind('.');
+        std::string bareTriggerType =
+            (lastDot != std::string::npos)
+                ? std::string(triggerTypeView.substr(lastDot + 1))
+                : fullTriggerType;
+
+        args.push_back("-b");
+        args.push_back(bareTriggerType);
+
+        // Route based on full D-Bus enum value
+        if (fullTriggerType == SBE_DUMP_TRIGGER_TIMEOUT)
+        {
+            // For SBE Timeout: dump_monitor no longer collects; let opdreport
+            // invoke dump-collect which calls
+            // SbeDumpCollector::collectTriggeredSBEDump() Timeout collection is
+            // now handled in SbeDumpCollector
+            lg2::info("SBE Timeout dump: routing to dump-collect via opdreport "
+                      "for {PATH}",
+                      "PATH", path);
+        }
+        else if (fullTriggerType == SBE_DUMP_TRIGGER_BOOTFAILURE)
+        {
+            // For BootFailure: dump files were pre-collected; pass path via -p
+            auto dumpFilesPathIt = properties.find("DumpFilesPath");
+            if (dumpFilesPathIt != properties.end())
+            {
+                std::string filesPath =
+                    std::get<std::string>(dumpFilesPathIt->second);
+                args.push_back("-p");
+                args.push_back(filesPath);
+            }
+        }
     }
 
     std::vector<char*> argv;

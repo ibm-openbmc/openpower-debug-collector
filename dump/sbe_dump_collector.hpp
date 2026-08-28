@@ -56,9 +56,14 @@ class SbeDumpCollector
      * @param failingUnit ID of the failing unit from which the dump is
      * collected.
      * @param path Path where the collected dump will be stored.
+     * @param triggerType Optional SBE dump trigger type (e.g., "Timeout",
+     * "BootFailure"); required for trigger-based SBE dump collection on
+     * non-LEGACY_PHAL backends.
      */
-    void collectDump(uint8_t type, uint32_t id, uint32_t failingUnit,
-                     const std::filesystem::path& path);
+    void collectDump(
+        uint8_t type, uint32_t id, uint32_t failingUnit,
+        const std::filesystem::path& path,
+        const std::optional<std::string>& triggerType = std::nullopt);
 
   private:
     /**
@@ -76,6 +81,31 @@ class SbeDumpCollector
      */
     void collectHWHBDump(uint8_t type, uint32_t id, uint64_t failingUnit,
                          const std::filesystem::path& path);
+
+    /**
+     * @brief Collect SBE dump for trigger-based scenarios (Timeout, Downstream,
+     * etc.).
+     *
+     * Handles special SBE dump collection scenarios based on trigger type:
+     * - For Timeout: Creates temp directory under /tmp/sppe_dump, calls hostfw
+     * to recover SPPE and collect dump, returns the collected path
+     * - For BootFailure: Handles pre-collected dump files from DumpFilesPath
+     * - For Downstream: Future trigger type handling
+     *
+     * @param id The dump ID
+     * @param failingUnit The chip position of the failing unit
+     * @param triggerType The SBE dump trigger type (e.g., "Timeout",
+     * "BootFailure")
+     * @param dumpFilesPath Optional path to pre-collected dump files
+     * @param path The output path provided by opdreport (plat_dump directory);
+     *             collected files are written here so opdreport can package
+     * them
+     * @throws std::runtime_error if operation fails
+     */
+    void collectTriggeredSBEDump(
+        uint32_t id, uint32_t failingUnit, const std::string& triggerType,
+        const std::optional<std::string>& dumpFilesPath,
+        const std::filesystem::path& path);
 
     /**
      * @brief Execute HWPs to collect SBE dump.

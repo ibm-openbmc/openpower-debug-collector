@@ -3,6 +3,8 @@
 #include "chipop_iface.hpp"
 #include "targeting_iface.hpp"
 
+#include <errl_handle.H>
+
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -55,5 +57,18 @@ uint32_t createChipOpErrorPEL(
  * @return tuple of (PEL ID, SRC string)
  */
 std::tuple<uint32_t, std::string> getPelInfo(uint32_t logId);
+
+/**
+ * @brief Commit a hostfw error handle as a PEL
+ *
+ * Takes an error handle returned by hostfw functions (e.g.,
+ * recoverSppeAndCollectDump) and commits it as a PEL in the system.
+ * Returns the PEL ID for tracking.
+ *
+ * @param[in] err Error handle from hostfw (moved/consumed)
+ * @return uint32_t PEL ID if committed successfully, 0 on failure or if err is
+ * null
+ */
+uint32_t commitHostfwError(errl::ErrlHandleOpt&& err);
 
 } // namespace openpower::dump::phal::error
