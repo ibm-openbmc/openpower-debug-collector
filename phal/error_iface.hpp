@@ -3,7 +3,9 @@
 #include "chipop_iface.hpp"
 #include "targeting_iface.hpp"
 
+#ifdef NEXT_PHAL
 #include <errl_handle.H>
+#endif
 
 #include <cstdint>
 #include <filesystem>
@@ -58,6 +60,7 @@ uint32_t createChipOpErrorPEL(
  */
 std::tuple<uint32_t, std::string> getPelInfo(uint32_t logId);
 
+#ifdef NEXT_PHAL
 /**
  * @brief Commit a hostfw error handle as a PEL
  *
@@ -70,5 +73,6 @@ std::tuple<uint32_t, std::string> getPelInfo(uint32_t logId);
  * null
  */
 uint32_t commitHostfwError(errl::ErrlHandleOpt&& err);
+#endif
 
 } // namespace openpower::dump::phal::error

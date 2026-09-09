@@ -82,6 +82,7 @@ class SbeDumpCollector
     void collectHWHBDump(uint8_t type, uint32_t id, uint64_t failingUnit,
                          const std::filesystem::path& path);
 
+#ifdef NEXT_PHAL
     /**
      * @brief Collect SBE dump for trigger-based scenarios (Timeout, Downstream,
      * etc.).
@@ -106,6 +107,7 @@ class SbeDumpCollector
         uint32_t id, uint32_t failingUnit, const std::string& triggerType,
         const std::optional<std::string>& dumpFilesPath,
         const std::filesystem::path& path);
+#endif // NEXT_PHAL
 
     /**
      * @brief Execute HWPs to collect SBE dump.
