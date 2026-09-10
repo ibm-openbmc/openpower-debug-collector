@@ -45,6 +45,7 @@ std::tuple<uint32_t, std::string> getPelInfo([[maybe_unused]] uint32_t logId)
     return {0, ""};
 }
 
+#ifdef NEXT_PHAL
 // Helper to convert errl severity to D-Bus level string
 static std::string getSeverityLevel(int severity)
 {
@@ -155,5 +156,6 @@ uint32_t commitHostfwError(errl::ErrlHandleOpt&& err)
         return 0;
     }
 }
+#endif // NEXT_PHAL
 
 } // namespace openpower::dump::phal::error

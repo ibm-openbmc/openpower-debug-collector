@@ -42,14 +42,14 @@ namespace phal_err = openpower::dump::phal::error;
 void SbeDumpCollector::collectDump(
     uint8_t type, uint32_t id, uint32_t failingUnit,
     const std::filesystem::path& path,
-    const std::optional<std::string>& triggerType)
+    [[maybe_unused]] const std::optional<std::string>& triggerType)
 {
     if ((type == SBE_DUMP_TYPE_SBE) || (type == SBE_DUMP_TYPE_MSBE))
     {
 #ifdef LEGACY_PHAL
         collectSBEDump(id, failingUnit, path, static_cast<int>(type));
 #else
-        // For non-LEGACY_PHAL: handle trigger-based SBE dumps
+        // For NEXT_PHAL: handle trigger-based SBE dumps
         if (triggerType.has_value())
         {
             collectTriggeredSBEDump(id, failingUnit, triggerType.value(),
@@ -147,6 +147,7 @@ void SbeDumpCollector::collectHWHBDump(uint8_t type, uint32_t id,
     }
     lg2::info("Dump collection completed");
 }
+#ifdef NEXT_PHAL
 void SbeDumpCollector::collectTriggeredSBEDump(
     uint32_t id, uint32_t failingUnit, const std::string& triggerType,
     const std::optional<std::string>& dumpFilesPath,
@@ -216,6 +217,7 @@ void SbeDumpCollector::collectTriggeredSBEDump(
         throw std::runtime_error(errorMsg);
     }
 }
+#endif // NEXT_PHAL
 
 #ifdef LEGACY_PHAL
 void SbeDumpCollector::collectSBEDump(uint32_t id, uint32_t failingUnit,
