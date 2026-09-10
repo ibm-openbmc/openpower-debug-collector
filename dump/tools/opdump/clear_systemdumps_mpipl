@@ -1,0 +1,55 @@
+#!/bin/bash
+# clear_systemdumps_mpipl - Remove system dump entries during MPIPL poweroff,
+# preserving any entry that is both Disruptive and InProgress (i.e. the dump
+# that triggered the MPIPL itself).
+
+DUMP_MANAGER="xyz.openbmc_project.Dump.Manager"
+# ObjectManager is only implemented on the root dump path, not sub-paths.
+DUMP_ROOT="/xyz/openbmc_project/dump"
+SYSTEM_ENTRY_PREFIX="/xyz/openbmc_project/dump/system/entry"
+SYSTEM_IFACE="xyz.openbmc_project.Dump.Entry.System"
+PROGRESS_IFACE="xyz.openbmc_project.Common.Progress"
+
+DISRUPTIVE="xyz.openbmc_project.Dump.Entry.System.SystemImpact.Disruptive"
+IN_PROGRESS="xyz.openbmc_project.Common.Progress.OperationStatus.InProgress"
+
+# Retrieve all managed objects once from the root dump path.
+output=$(busctl --verbose call "$DUMP_MANAGER" \
+        "$DUMP_ROOT" \
+        org.freedesktop.DBus.ObjectManager \
+    GetManagedObjects)
+
+# Extract object paths under the system entry prefix that expose the System
+# dump interface, filtering out the manager object itself.
+# sort -u removes duplicate paths that awk may emit when the interface name
+# appears multiple times in a single object's verbose output block.
+paths=$(echo "$output" | awk -v iface="$SYSTEM_IFACE" \
+        -v prefix="$SYSTEM_ENTRY_PREFIX" '
+    /OBJECT_PATH/ {
+        path = $2
+        gsub(/;/, "", path)
+        gsub(/"/, "", path)
+    }
+    $0 ~ iface && index(path, prefix) == 1 { print path }
+' | sort -u)
+
+for path in $paths; do
+    # Read SystemImpact property
+    impact=$(busctl get-property "$DUMP_MANAGER" "$path" \
+        "$SYSTEM_IFACE" SystemImpact 2>/dev/null | awk '{print $2}' | tr -d '"')
+
+    # Read Status property (from Progress interface)
+    status=$(busctl get-property "$DUMP_MANAGER" "$path" \
+        "$PROGRESS_IFACE" Status 2>/dev/null | awk '{print $2}' | tr -d '"')
+
+    # Keep the entry if it is Disruptive AND InProgress — this is the live
+    # MPIPL dump that must not be deleted.
+    if [ "$impact" = "$DISRUPTIVE" ] && [ "$status" = "$IN_PROGRESS" ]; then
+        echo "Preserving active MPIPL system dump entry: $path"
+        continue
+    fi
+
+    echo "Deleting system dump entry: $path (impact=$impact status=$status)"
+    busctl call "$DUMP_MANAGER" "$path" \
+        xyz.openbmc_project.Object.Delete Delete || true
+done
