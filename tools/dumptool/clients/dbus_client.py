@@ -308,10 +308,12 @@ class DBusClient:
             )
 
         # Read PELID from the new interface (available on all dump types that
-        # carry an error-log association, including system dumps)
-        pel_id = get_property("PELID", PELID_IFACE, optional=True)
-        if pel_id == 0:
-            pel_id = None
+        # carry an error-log association, including system dumps).
+        # BMC dumps do not carry PEL associations so skip this for them.
+        if dump_type != DumpType.BMC:
+            pel_id = get_property("PELID", PELID_IFACE, optional=True)
+            if pel_id == 0:
+                pel_id = None
         if subtype in ("hardware", "sbe", "memory-buffer-sbe"):
             failing_unit_id = get_property(
                 "FailingUnitId",
