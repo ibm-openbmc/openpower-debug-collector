@@ -647,7 +647,7 @@ function build_mpipl_dump_header() {
     tmp_hdr=$(mktemp /tmp/mpipl_hdr.XXXXXX)
 
     # Extract the header into the temp file.
-    dd if="$src_file" of="$tmp_hdr" bs=1 count="$HDR_SIZE" 2>/dev/null
+    dd if="$src_file" of="$tmp_hdr" bs="$HDR_SIZE" count=1 2>/dev/null
 
     # bmcSerialNo is already set by get_bmc_model_serial_number() which is
     # called unconditionally from gen_mpipl_package() before reaching here.
@@ -738,9 +738,10 @@ PYEOF
 
     # Concatenate patched header + body (bytes after HDR_SIZE) → out_file.
     # This is a single write that produces one IN_CLOSE_WRITE event.
+    # Use tail -c +N (1-based) to skip the header efficiently
     {
         cat "$tmp_hdr"
-        dd if="$src_file" bs=1 skip="$HDR_SIZE" 2>/dev/null
+        tail -c +"$((HDR_SIZE + 1))" "$src_file"
     } > "$out_file"
     rc=$?
     rm -f "$tmp_hdr"
