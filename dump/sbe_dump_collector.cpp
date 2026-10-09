@@ -207,9 +207,46 @@ void SbeDumpCollector::collectTriggeredSBEDump(
             throw std::runtime_error(errorMsg);
         }
     }
+    else if (triggerType == "Downstream")
+    {
+        // Downstream: SPPE is alive — no hreset needed.
+        // The EID was provided by the caller via ErrorLogId on the busctl call.
+        errl::ErrlHandleOpt partialFailure;
+        auto err = hostfw::dump::collectDownstreamSBEDump(failingUnit, path,
+                                                          partialFailure);
+        if (err)
+        {
+            // Total failure — no files collected — mark dump Failed
+            uint32_t pelId = phal_err::commitHostfwError(std::move(err));
+            lg2::error(
+                "collectTriggeredSBEDump: Downstream collection failed for "
+                "unit {UNIT}, PEL ID: {PEL}",
+                "UNIT", failingUnit, "PEL", pelId);
+            throw std::runtime_error(
+                "collectTriggeredSBEDump: Downstream collection failed for "
+                "unit " +
+                std::to_string(failingUnit));
+        }
+
+        if (partialFailure)
+        {
+            // Partial failure — some files collected — commit warning PEL
+            // but do not throw so opdreport packages whatever was collected.
+            uint32_t pelId =
+                phal_err::commitHostfwError(std::move(partialFailure));
+            lg2::warning(
+                "collectTriggeredSBEDump: partial Downstream collection for "
+                "unit {UNIT}, PEL ID: {PEL} — dump will be packaged with "
+                "available data",
+                "UNIT", failingUnit, "PEL", pelId);
+        }
+
+        lg2::info("collectTriggeredSBEDump: Downstream collection complete for "
+                  "unit {UNIT}",
+                  "UNIT", failingUnit);
+    }
     else
     {
-        // Future trigger types (Downstream, etc.)
         std::string errorMsg =
             std::string("collectTriggeredSBEDump: Unsupported trigger type: ") +
             triggerType;
