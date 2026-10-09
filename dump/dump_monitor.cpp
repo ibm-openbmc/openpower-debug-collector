@@ -595,6 +595,19 @@ void DumpMonitor::initiateDumpCollection(const std::string& path,
             return;
         }
 
+        // If the mpreboot marker is already present, the user has initiated
+        // MPIPL manually via ecmd istep pre_mpipl.  The host is already in
+        // MPIPL context and the isteps will drive the dump collection — do
+        // not trigger a second MPIPL reboot.
+        constexpr auto mprebootMarker = "/run/openbmc/mpreboot@0";
+        if (std::filesystem::exists(mprebootMarker))
+        {
+            lg2::info("mpreboot marker present at {PATH}; skipping MPIPL "
+                      "reboot trigger for system dump {DUMP}",
+                      "PATH", mprebootMarker, "DUMP", path);
+            return;
+        }
+
         // Disruptive system dump: trigger MPIPL reboot so the host writes
         // the raw dump to MPIPL_STAGING_PATH.  The always-on inotify watch
         // (setupInotifyWatch / inotifyCallback) will detect the file and
