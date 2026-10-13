@@ -44,12 +44,40 @@ void SbeDumpCollector::collectDump(
     const std::filesystem::path& path,
     [[maybe_unused]] const std::optional<std::string>& triggerType)
 {
-    if ((type == SBE_DUMP_TYPE_SBE) || (type == SBE_DUMP_TYPE_MSBE))
-    {
+    lg2::info("collectDump: entering collectDump type={TYPE} id={ID} "
+              "failingUnit={UNIT}",
+              "TYPE", type, "ID", id, "UNIT", failingUnit);
 #ifdef LEGACY_PHAL
+    // Legacy backend handles both SBE types the same way
+    if (type == SBE_DUMP_TYPE_MSBE || type == SBE_DUMP_TYPE_SBE)
+    {
         collectSBEDump(id, failingUnit, path, static_cast<int>(type));
+        return;
+    }
 #else
-        // For NEXT_PHAL: handle trigger-based SBE dumps
+    if (type == SBE_DUMP_TYPE_MSBE)
+    {
+        // NEXT_PHAL: Odyssey OCMB SBE dump — no trigger type needed,
+        // mirrors the LEGACY_PHAL path which uses DumpType.MemoryBufferSBE
+        // directly without a SBEDumpTriggerType.
+        initializePhalAbstraction();
+        auto err = hostfw::dump::collectOdysseyDump(id, failingUnit, path);
+        if (err)
+        {
+            uint32_t pelId = phal_err::commitHostfwError(std::move(err));
+            lg2::error("collectDump: OdysseyDump failed for unit {UNIT}, "
+                       "PEL ID: {PEL}",
+                       "UNIT", failingUnit, "PEL", pelId);
+            throw std::runtime_error(
+                "collectDump: OdysseyDump failed for unit " +
+                std::to_string(failingUnit));
+        }
+        return;
+    }
+
+    if (type == SBE_DUMP_TYPE_SBE)
+    {
+        // NEXT_PHAL: P10 proc SBE dump requires a trigger type
         if (triggerType.has_value())
         {
             collectTriggeredSBEDump(id, failingUnit, triggerType.value(),
@@ -62,9 +90,9 @@ void SbeDumpCollector::collectDump(
                 "(type={TYPE})",
                 "TYPE", type);
         }
-#endif
         return;
     }
+#endif
     collectHWHBDump(type, id, failingUnit, path);
 }
 
