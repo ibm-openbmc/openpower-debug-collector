@@ -87,7 +87,7 @@ void requestSBEDump(const uint32_t failingUnit, const uint32_t eid,
                  uint64_t(failingUnit)}};
 
         method.append(createParams);
-        auto reply = bus.call(method).unpack<sdbusplus::message::object_path>();
+        auto reply = bus.call(method).unpack<sdbusplus::object_path>();
 
         monitorDumpCreation(reply.str, SBE_DUMP_TIMEOUT);
     }
