@@ -207,9 +207,75 @@ void SbeDumpCollector::collectTriggeredSBEDump(
             throw std::runtime_error(errorMsg);
         }
     }
+    else if (triggerType == "Downstream")
+    {
+        // Downstream: SPPE is alive — no hreset needed.
+        // The EID was provided by the caller via ErrorLogId on the busctl call.
+        auto err = hostfw::dump::collectDownstreamSBEDump(failingUnit, path);
+
+        // Evaluate before addLogDataToDump(), which writes errorInfo into
+        // path and would make the directory look non-empty.
+        const bool noFilesCollected = std::filesystem::is_empty(path);
+
+        if (err)
+        {
+            // Commit whatever error was returned, whether it happened on the
+            // first getSBEDump call or after some files were already written.
+            uint32_t pelId = phal_err::commitHostfwError(std::move(err));
+            lg2::error(
+                "collectTriggeredSBEDump: Downstream collection error for "
+                "unit {UNIT}, PEL ID: {PEL}",
+                "UNIT", failingUnit, "PEL", pelId);
+
+            // Record the EID in the dump's errorInfo file so the dump
+            // package carries a pointer to the error log. SRC is empty
+            // because getPelInfo() is not yet implemented for phal_next.
+            //
+            // addLogDataToDump writes errorInfo into the directory it is
+            // given. gendumpinfo reads errorInfo from content_path (the
+            // dump root), but opdreport passes plat_dump/ as --path to
+            // dump-collect, so `path` here is plat_dump/. Use parent_path()
+            // to write errorInfo one level up into the dump root where
+            // gendumpinfo expects it.
+            // TODO: fix opdreport to pass content_path as --path and have
+            // dump-collect append plat_dump/ itself, then drop parent_path()
+            // here and in the Timeout/HW paths that have the same issue.
+            if (pelId != 0)
+            {
+                try
+                {
+                    addLogDataToDump(pelId, "", "HubChip", failingUnit,
+                                     path.parent_path());
+                }
+                catch (const std::exception& e)
+                {
+                    lg2::error(
+                        "collectTriggeredSBEDump: failed to add log data "
+                        "to dump: {ERROR}",
+                        "ERROR", e.what());
+                }
+            }
+        }
+
+        // The dump is a failure only if nothing was collected. If at least one
+        // file is present, opdreport packages what we have.
+        if (noFilesCollected)
+        {
+            lg2::error("collectTriggeredSBEDump: Downstream collection "
+                       "produced no files for unit {UNIT}",
+                       "UNIT", failingUnit);
+            throw std::runtime_error(
+                "collectTriggeredSBEDump: Downstream collection failed for "
+                "unit " +
+                std::to_string(failingUnit));
+        }
+
+        lg2::info("collectTriggeredSBEDump: Downstream collection complete for "
+                  "unit {UNIT}",
+                  "UNIT", failingUnit);
+    }
     else
     {
-        // Future trigger types (Downstream, etc.)
         std::string errorMsg =
             std::string("collectTriggeredSBEDump: Unsupported trigger type: ") +
             triggerType;
