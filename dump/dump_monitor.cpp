@@ -27,6 +27,8 @@ constexpr std::string_view SBE_DUMP_TRIGGER_BOOTFAILURE =
     "com.ibm.Dump.Create.SBEDumpTriggerType.BootFailure";
 constexpr std::string_view SBE_DUMP_TRIGGER_TIMEOUT =
     "com.ibm.Dump.Create.SBEDumpTriggerType.Timeout";
+constexpr std::string_view SBE_DUMP_TRIGGER_DOWNSTREAM =
+    "com.ibm.Dump.Create.SBEDumpTriggerType.Downstream";
 
 // Bare trigger type values (after stripping enum prefix)
 constexpr std::string_view TRIGGER_BOOTFAILURE = "BootFailure";
@@ -449,6 +451,15 @@ void DumpMonitor::executeCollectionScript(
                 args.push_back("-p");
                 args.push_back(filesPath);
             }
+        }
+        else if (fullTriggerType == SBE_DUMP_TRIGGER_DOWNSTREAM)
+        {
+            // Downstream: SPPE is alive — no hreset, no pre-collected files.
+            // EID is already carried as -e (ErrorLogId from the busctl call).
+            // dump-collect will call getSBEDump until it returns empty data.
+            lg2::info("SBE Downstream dump: routing to dump-collect via "
+                      "opdreport for {PATH}",
+                      "PATH", path);
         }
     }
 
