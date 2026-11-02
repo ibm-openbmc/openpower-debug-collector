@@ -615,28 +615,46 @@ function plat_dump_header() {
 #     +0x16  File Name Prefix   2 B  0x000F
 #     +0x18  Dump File Name    40 B  <SYSDUMP|RSCDUMP>.<serial>.<id>.<YYYYMMDDhhmmss>
 #
-#   SYS DUMP Summary (base 0x0D0 = 208):
+#   After the directory come the 0x30 byte SECTION entries, then the dump
+#   summary block.  Where the summary block starts depends on the dump:
+#     MPIPL system dump  3 sections (DUMP SUMMARY, HARDWARE DATA,
+#                        HYPERVISOR DATA)  "SYS DUMP" at 0x0D0
+#     resource dump      2 sections (DUMP SUMMARY, RESOURCE DATA)
+#                        "RSC DUMP" at 0x0A0
+#   The fields below are at the same offset from the start of either block
+#   (base 0x0D0 or 0x0A0, passed in as sum_base):
 #     +0x008  Dump Request Time  8 B  BCD timestamp
 #     +0x010  Dump Identifier    4 B  binary dump-manager id
 #     +0x040  System Name       32 B  ASCII hostname
+#     +0x060  System Serial      7 B  ASCII system serial
 #     +0x068  System Log ID/EID  4 B  associated error EID
-#     +0x06C  File Header Size   2 B  0x00D0
+#     +0x06C  File Header Size   2 B  equals the block base
 #     +0x1B0  BMC Serial Number 12 B  NUL-padded BMC serial
 #     +0x1BC  Originator Type    4 B  ASCII/NUL originator code
 #     +0x1C0  Originator ID     32 B  NUL-padded ASCII originator id
+#
+# An MPIPL dump gets all of these fields from the BMC.  A resource dump is
+# written completely by the host, so only the file name, the dump identifier,
+# the BMC serial number and the originator are set, and the date and time only
+# if the host did not provide one.  Everything else is kept as the host wrote
+# it.
 #
 # @param[in]  src_file   raw MPIPL/resource dump file (not modified)
 # @param[out] out_file   destination for the reassembled dump
 # @param[in]  dump_name  value for the Dump File Name field, e.g.
 #                        SYSDUMP.<serial>.<id>.<ts> or RSCDUMP.<serial>.<id>.<ts>
+# @param[in]  sum_base   start of the dump summary block: 208 (0xD0) for an
+#                        MPIPL dump, 160 (0xA0) for a resource dump
 #
 function build_staged_dump_header() {
     local src_file="$1"
     local out_file="$2"
     local file_name="$3"
+    local sum_base="$4"
 
-    # The header block is exactly 688 bytes (0x2B0):
-    #   SUM(208) + last-field-offset(0x1C0=448) + last-field-width(32) = 688
+    # The header block patched here is 688 bytes (0x2B0).  The last field is
+    # at most sum_base(0xD0) + 0x1C0 + 32 = 688 bytes in, so every field that
+    # is patched lies inside it for either dump.
     local HDR_SIZE=688
 
     local src_size
@@ -670,6 +688,8 @@ function build_staged_dump_header() {
         "$ORIGINATOR_TYPE" \
         "$ORIGINATOR_ID" \
         "$serialNo" \
+        "${bcd_in_header:-0}" \
+        "$sum_base" \
         << 'PYEOF'
 import sys, struct
 
@@ -683,8 +703,14 @@ bmc_ser   = sys.argv[7]
 orig_type = sys.argv[8]
 orig_id   = sys.argv[9]
 serial_no = sys.argv[10]  # 7-char system serial number
+bcd_in_hdr = sys.argv[11] == '1'  # raw header already has a valid BCD time
+SUM = int(sys.argv[12])           # start of the dump summary block
 
-SUM = 0xD0  # SYS DUMP Summary base offset
+# 0xD0 "SYS DUMP" for an MPIPL system dump, 0xA0 "RSC DUMP" for a resource
+# dump.  A resource dump is completely filled in by the host.
+if SUM not in (0xA0, 0xD0):
+    sys.exit('unsupported dump summary offset %#x' % SUM)
+is_rsc = SUM == 0xA0
 
 def put(buf, offset, data):
     buf[offset:offset + len(data)] = data
@@ -693,35 +719,40 @@ def ascii_pad(s, width):
     b = s.encode('ascii', errors='replace')[:width]
     return b + b'\x00' * (width - len(b))
 
-def bcd_pad(digits, width):
-    out = bytearray()
-    for i in range(0, len(digits), 2):
-        out.append(int(digits[i:i+2], 10))
-    out += b'\x00' * (width - len(out))
-    return bytes(out[:width])
+def bcd(digits):
+    # Packed BCD, two decimal digits per byte: "26" -> 0x26
+    return bytes(int(digits[i:i+2], 16) for i in range(0, len(digits), 2))
 
 with open(hdr_path, 'r+b') as f:
     buf = bytearray(f.read())
 
-# PAPR FILE Directory
-put(buf, 0x00, ascii_pad('FILE    ', 8))
-put(buf, 0x08, b'\x00\x40')
-put(buf, 0x0A, b'\x00' * 6)
-put(buf, 0x10, b'\x00' * 4)
-put(buf, 0x14, b'\x00\x01')
-put(buf, 0x16, b'\x00\x0F')
+# PAPR FILE Directory.  A resource dump keeps the host's values, only the
+# dump file name is replaced.
+if not is_rsc:
+    put(buf, 0x00, ascii_pad('FILE    ', 8))
+    put(buf, 0x08, b'\x00\x40')
+    put(buf, 0x0A, b'\x00' * 6)
+    put(buf, 0x10, b'\x00' * 4)
+    put(buf, 0x14, b'\x00\x01')
+    put(buf, 0x16, b'\x00\x0F')
 put(buf, 0x18, ascii_pad(file_name, 40))
 
-# SYS DUMP Summary — PHAL-owned fields
-put(buf, SUM + 0x008, bcd_pad(dday, 8))
+# Dump summary block
+# Date and time (7 bytes) stay as the host wrote them; they are written only
+# when the raw header had no valid time.  The 8th byte is never touched.
+if not bcd_in_hdr:
+    put(buf, SUM + 0x008, bcd(dday))
 put(buf, SUM + 0x010, struct.pack('>I', int(dump_id, 16)))
-put(buf, SUM + 0x040, ascii_pad(sysname, 32))
-put(buf, SUM + 0x060, ascii_pad(serial_no, 7))
-if len(elog_id) == 8:
-    put(buf, SUM + 0x068, bytes.fromhex(elog_id))
-else:
-    put(buf, SUM + 0x068, b'\x00' * 4)
-put(buf, SUM + 0x06C, b'\x00\xD0')
+# System name, serial number, error log id and the header size are filled in
+# by the host in a resource dump, so only an MPIPL dump gets them from the BMC
+if not is_rsc:
+    put(buf, SUM + 0x040, ascii_pad(sysname, 32))
+    put(buf, SUM + 0x060, ascii_pad(serial_no, 7))
+    if len(elog_id) == 8:
+        put(buf, SUM + 0x068, bytes.fromhex(elog_id))
+    else:
+        put(buf, SUM + 0x068, b'\x00' * 4)
+    put(buf, SUM + 0x06C, struct.pack('>H', SUM))
 put(buf, SUM + 0x1B0, ascii_pad(bmc_ser, 12))
 put(buf, SUM + 0x1BC, ascii_pad(orig_type, 4))
 put(buf, SUM + 0x1C0, ascii_pad(orig_id, 32))
@@ -757,6 +788,20 @@ PYEOF
     return 0
 }
 
+# @brief Check for a valid YYYYMMDDhhmmss date and time.
+#
+# @param[in] ts  string to check
+# @return 0 if ts is 14 digits with a possible date and time, 1 otherwise
+function valid_dump_timestamp() {
+    local ts="$1"
+    [[ "$ts" =~ ^[0-9]{14}$ ]] &&
+        ((10#${ts:0:4} >= 1970 &&
+            10#${ts:4:2} >= 1 && 10#${ts:4:2} <= 12 &&
+            10#${ts:6:2} >= 1 && 10#${ts:6:2} <= 31 &&
+            10#${ts:8:2} <= 23 && 10#${ts:10:2} <= 59 &&
+            10#${ts:12:2} <= 59))
+}
+
 # @brief Package a staged MPIPL system dump or resource dump.
 #
 # Called from gen_staged_dump_package() when --staged-src is set.  Expects the
@@ -765,7 +810,8 @@ PYEOF
 #   dump_id    — 8-hex-char dump manager entry id (e.g. A0000001)
 #   dump_dir   — destination base directory (opdump/)
 #   serialNo   — system serial number (set by fetch_serial_number)
-#   dDay       — timestamp string YYYYMMDDhhmmss
+#   dDay       — timestamp string YYYYMMDDhhmmss; replaced by the time stamp
+#                in the raw dump header when it has a valid one
 #   elog_id    — 8-hex-char EID or "00000000"
 #   ORIGINATOR_TYPE / ORIGINATOR_ID — from get_originator_details
 #
@@ -781,13 +827,63 @@ function package_staged_dump() {
     fetch_pel_id
     get_originator_details "system"
 
-    # The raw file's Dump File Name field (offset 0x18) starts with a 7-byte
-    # type tag: SYSDUMP for an MPIPL system dump, RSCDUMP for a resource dump.
-    # Keep that tag as the name prefix; fall back to SYSDUMP if unrecognised.
-    local dump_prefix
-    dump_prefix=$(dd if="$staged_src" bs=1 skip=24 count=7 2>/dev/null)
-    if [[ "$dump_prefix" != "RSCDUMP" ]]; then
+    # The layout of the raw header follows from the eye-catcher of its dump
+    # summary block: "RSC DUMP" at 0xA0 for a resource dump (two sections) and
+    # "SYS DUMP" at 0xD0 for an MPIPL system dump (three sections).
+    local rsc_tag sys_tag sum_base dump_prefix
+    rsc_tag=$(dd if="$staged_src" bs=1 skip=$((0xA0)) count=8 2>/dev/null |
+        tr -d '\000')
+    sys_tag=$(dd if="$staged_src" bs=1 skip=$((0xD0)) count=8 2>/dev/null |
+        tr -d '\000')
+    if [[ "$rsc_tag" == "RSC DUMP" ]]; then
+        sum_base=$((0xA0))
+        dump_prefix="RSCDUMP"
+    elif [[ "$sys_tag" == "SYS DUMP" ]]; then
+        sum_base=$((0xD0))
         dump_prefix="SYSDUMP"
+    else
+        echo "package_staged_dump: unknown dump header layout in" \
+            "$staged_src, expected RSC DUMP at 0xA0 or SYS DUMP at 0xD0"
+        rm -f "$staged_src"
+        return 1
+    fi
+
+    # The raw file's Dump File Name field (offset 0x18, 40 bytes) is written by
+    # the host as <SYSDUMP|RSCDUMP>.<serial>.<id>.<YYYYMMDDhhmmss>.  Its first
+    # 7 bytes are the type tag, which has to agree with the layout.
+    local raw_name
+    raw_name=$(dd if="$staged_src" bs=1 skip=24 count=40 2>/dev/null |
+        tr -d '\000')
+    local name_tag="${raw_name:0:7}"
+    if [[ ("$name_tag" == "SYSDUMP" || "$name_tag" == "RSCDUMP") &&
+        "$name_tag" != "$dump_prefix" ]]; then
+        echo "package_staged_dump: dump name tag '$name_tag' does not match" \
+            "the $dump_prefix header layout of $staged_src"
+        rm -f "$staged_src"
+        return 1
+    fi
+
+    # The date and time of the dump are the ones the host wrote in the raw
+    # header, for both MPIPL and resource dumps.  Take them from the dump
+    # file name field, otherwise from the BCD time field of the dump summary
+    # block (0xA8 for a resource dump, 0xD8 for an MPIPL dump).  Only when
+    # neither holds a valid time, keep the current time already in dDay.
+    local bcd_ts
+    bcd_ts=$(od -An -v -tx1 -j $((sum_base + 8)) -N 7 "$staged_src" \
+        2>/dev/null | tr -d ' \n')
+    local name_ts="${raw_name##*.}"
+    local bcd_in_header=0
+    if valid_dump_timestamp "$bcd_ts"; then
+        bcd_in_header=1
+    fi
+
+    if valid_dump_timestamp "$name_ts"; then
+        dDay="$name_ts"
+    elif [[ $bcd_in_header -eq 1 ]]; then
+        dDay="$bcd_ts"
+    else
+        echo "package_staged_dump: no valid date and time in raw dump" \
+            "header ('$raw_name'), using current time $dDay"
     fi
 
     local dump_name="${dump_prefix}.${serialNo}.${dump_id}.${dDay}"
@@ -807,7 +903,7 @@ function package_staged_dump() {
     # Writing here triggers IN_CLOSE_WRITE on the child watch →
     # updateEntry() → entry Completed.
     local out_file="${dest_dir}/${dump_name}"
-    build_staged_dump_header "$staged_src" "$out_file" "$dump_name"
+    build_staged_dump_header "$staged_src" "$out_file" "$dump_name" "$sum_base"
     local rc=$?
 
     rm -f "$staged_src"
