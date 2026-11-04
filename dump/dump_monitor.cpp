@@ -363,8 +363,8 @@ std::optional<std::string> DumpMonitor::findInProgressSystemDump()
     return inProgressEntries.front();
 }
 
-void DumpMonitor::executeCollectionScript(
-    const sdbusplus::object_path& path, const PropertyMap& properties)
+void DumpMonitor::executeCollectionScript(const sdbusplus::object_path& path,
+                                          const PropertyMap& properties)
 {
     std::vector<std::string> args = {"opdreport"};
     std::regex idFormat("^[a-fA-F0-9]{8}$");
@@ -554,8 +554,8 @@ void DumpMonitor::updateProgressStatus(const std::string& path,
     }
 }
 
-void DumpMonitor::startMpReboot(
-    const sdbusplus::object_path& objectPath [[maybe_unused]])
+void DumpMonitor::startMpReboot(const sdbusplus::object_path& objectPath
+                                [[maybe_unused]])
 {
     constexpr auto systemdService = "org.freedesktop.systemd1";
     constexpr auto systemdObjPath = "/org/freedesktop/systemd1";
