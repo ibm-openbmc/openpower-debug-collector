@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <string>
 #include <tuple>
+#include <utility>
 
 namespace openpower::dump::phal::error
 {
@@ -64,15 +65,39 @@ std::tuple<uint32_t, std::string> getPelInfo(uint32_t logId);
 /**
  * @brief Commit a hostfw error handle as a PEL
  *
- * Takes an error handle returned by hostfw functions (e.g.,
- * recoverSppeAndCollectDump) and commits it as a PEL in the system.
- * Returns the PEL ID for tracking.
+ * Publishes every terminal and observation entry with its diagnostic data.
+ * A publication failure does not prevent later entries from being attempted
+ * or change the hardware operation's completion status. Observation and
+ * terminal entries retain their supplied callout actions and native severity
+ * under the existing severity mapping. This boundary invokes no local guard,
+ * deconfigure or dump actions.
  *
  * @param[in] err Error handle from hostfw (moved/consumed)
- * @return uint32_t PEL ID if committed successfully, 0 on failure or if err is
- * null
+ * @return First successfully published PEL ID, or 0 when none was published.
+ *         Entries are ordered terminal-first, so a published terminal entry
+ *         takes precedence over observations.
  */
 uint32_t commitHostfwError(errl::ErrlHandleOpt&& err);
+
+/**
+ * @brief Publish all diagnostics and return the HostFW terminal failure state.
+ *
+ * Collection payload and previously written files remain valid when the
+ * handle contains only observations. PEL publication does not change that
+ * operation outcome. An optional ID receives the first successfully created
+ * PEL.
+ */
+inline bool commitHostfwErrorAndCheckFailure(errl::ErrlHandleOpt&& err,
+                                             uint32_t* pelId = nullptr)
+{
+    const bool terminal = errl::hasTerminalErrors(err);
+    const auto id = commitHostfwError(std::move(err));
+    if (pelId)
+    {
+        *pelId = id;
+    }
+    return terminal;
+}
 #endif
 
 } // namespace openpower::dump::phal::error

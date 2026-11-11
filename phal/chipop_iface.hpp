@@ -144,6 +144,10 @@ struct ChipOpError : public std::exception
  * @param collectFastArray Whether to collect fast array data
  * @return DumpData containing collected dump
  * @throws ChipOpError on failure
+ *
+ * @note Next backend publishes HostFW observations as PELs while retaining the
+ *       collected data; only terminal errors or an empty payload fail the
+ *       chip-op, regardless of observation severity.
  */
 DumpData getDump(targeting::TargetHandle chip, uint8_t dumpType,
                  uint8_t clockState, uint8_t collectFastArray);

@@ -1,4 +1,5 @@
 #include "chipop_iface.hpp"
+#include "error_iface.hpp"
 
 #include <dump.H>
 
@@ -61,17 +62,14 @@ DumpData getDump(targeting::TargetHandle chip, uint8_t dumpType,
 {
     std::vector<uint8_t> dumpData;
 
-    // Call dump module wrapper - handles target conversion and FFDC internally
-    // Returns errl::ErrlHandleOpt (std::nullopt on success)
+    // HostFW retains valid dump bytes independently of response diagnostics.
     auto errl = hostfw::dump::getDump(chip, dumpType, clockState,
                                       collectFastArray, dumpData);
 
-    // Check if error occurred (errl will have a value if there was an error)
-    if (errl)
+    if (error::commitHostfwErrorAndCheckFailure(std::move(errl)))
     {
-        // Error log was created internally by hostfw::dump::getDump
         throw ChipOpError(ChipOpError::Type::Failed,
-                          "getDump failed - error log created");
+                          "getDump failed - HostFW reported a terminal error");
     }
 
     // Verify data was collected
