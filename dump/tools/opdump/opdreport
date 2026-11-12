@@ -39,10 +39,11 @@ Options:
                               SBE dump subtype (BootFailure, Timeout, Downstream).
                               Determines collection method for SBE dumps.
                               Optional parameter.
-        --mpipl-src <path>    Path to the raw MPIPL dump file written by the
-                              Hostboot/MPIPL collection agent.  When this option
-                              is supplied the script takes the MPIPL path: -t is
-                              not required and dump-collect is not invoked.
+        --staged-src <path>   Path to the raw MPIPL system or resource dump
+                              file written by the host into the staging
+                              directory.  When this option is supplied the
+                              script takes the staged dump path: -t is not
+                              required and dump-collect is not invoked.
         -h, --help            Display this help and exit.
 EOF
 )
@@ -87,19 +88,19 @@ declare -x dump_content_type=""
 declare -x FILE=""
 declare -x boot_failure_path=""
 declare -x sbe_subtype=""
-declare -x mpipl_src=""
+declare -x staged_src=""
 
 #Source opdreport common functions
 . $DREPORT_INCLUDE/opfunctions
 
 # @brief Check the validity of user inputs and initialize global variables
 #
-# For MPIPL dumps (--mpipl-src supplied): name construction, dump_sbe_type
+# For staged dumps (--staged-src supplied): name construction, dump_sbe_type
 # validation, and get_originator_details are all skipped — gendumpheader's
-# gen_mpipl_package() handles everything.  Non-MPIPL calls have mpipl_src=""
+# gen_staged_dump_package() handles everything.  Other calls have staged_src=""
 # so they fall through to the full initialization block below.
 function initialize() {
-    if [[ -n "$mpipl_src" ]]; then
+    if [[ -n "$staged_src" ]]; then
         return "$SUCCESS"
     fi
 
@@ -312,17 +313,17 @@ function main() {
         return "$INTERNAL_FAILURE"
     fi
 
-    if [[ -n "$mpipl_src" ]]; then
-        # MPIPL path: raw file already written by Hostboot.
-        # gendumpheader detects mpipl_src and calls gen_mpipl_package()
+    if [[ -n "$staged_src" ]]; then
+        # Staged dump path: raw file already written by the host.
+        # gendumpheader detects staged_src and calls gen_staged_dump_package()
         # which handles header patching and final file assembly.
         "$HEADER_EXTENSION"
         result=$?
         if [[ $result -ne $SUCCESS ]]; then
-            echo "$($TIME_STAMP)" "Error: Failed to package MPIPL dump, Exiting rc=$result"
+            echo "$($TIME_STAMP)" "Error: Failed to package staged dump, Exiting rc=$result"
             return "$INTERNAL_FAILURE"
         fi
-        echo "$($TIME_STAMP)" "MPIPL dump packaging completed successfully"
+        echo "$($TIME_STAMP)" "Staged dump packaging completed successfully"
         return "$SUCCESS"
     fi
 
@@ -349,7 +350,7 @@ function main() {
 }
 
 if ! TEMP=$(getopt -o n:d:i:s:t:e:f:p:b:h \
-        --long name:,dir:,dumpid:,size:,type:,eid:,failingunit:,precollected_dump_path:,sbe-dump-subtype:,mpipl-src:,help \
+        --long name:,dir:,dumpid:,size:,type:,eid:,failingunit:,precollected_dump_path:,sbe-dump-subtype:,staged-src:,help \
         -- "$@"); then
     echo "Error: Invalid options"
     exit 1
@@ -389,8 +390,8 @@ while [[ $# -gt 1 ]]; do
             # Strip enum prefix if present (e.g., "com.ibm.Dump.Create.SBEDumpTriggerType.BootFailure" -> "BootFailure")
             sbe_subtype=${sbe_subtype##*.}
             shift 2 ;;
-        --mpipl-src)
-            mpipl_src=$2
+        --staged-src)
+            staged_src=$2
             shift 2 ;;
         -h|--help)
             echo "$help"
