@@ -164,18 +164,30 @@ void SbeDumpCollector::collectTriggeredSBEDump(
     {
         // For Timeout: write dump files directly into the path opdreport
         // created (plat_dump directory) so opdreport can find and package them
-        auto err =
-            hostfw::dump::recoverSppeAndCollectDump(id, failingUnit, path);
+        bool directAccessDumpCollected = false;
+        auto err = hostfw::dump::recoverSppeAndCollectDump(
+            id, failingUnit, path, directAccessDumpCollected);
         uint32_t pelId = 0;
         if (phal_err::commitHostfwErrorAndCheckFailure(std::move(err), &pelId))
         {
             // Only terminal HostFW errors reach here; observations alone do
-            // not fail the recovery. Files written before the failure remain
-            // available.
+            // not fail the recovery.
             lg2::error(
                 "collectTriggeredSBEDump: Timeout recovery failed for unit "
                 "{UNIT}, PEL ID: {PEL}",
                 "UNIT", failingUnit, "PEL", pelId);
+
+            // When hreset fails, hostfw collects the dump with direct access
+            // in the boot failure layout. The PEL is published above; tell
+            // dump-collect's caller so the dump is packaged as BootFailure.
+            if (directAccessDumpCollected)
+            {
+                throw SppeUnrecoverableError(
+                    "collectTriggeredSBEDump: SPPE unrecoverable for unit " +
+                    std::to_string(failingUnit) +
+                    ", direct access dump collected");
+            }
+
             throw std::runtime_error(
                 "collectTriggeredSBEDump: hostfw recovery failed for unit " +
                 std::to_string(failingUnit));

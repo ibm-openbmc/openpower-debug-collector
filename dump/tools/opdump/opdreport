@@ -66,6 +66,10 @@ readonly FILE_SCRIPT="$DREPORT_SOURCE/include.d/gendumpinfo"
 readonly SUCCESS=0
 readonly INTERNAL_FAILURE=1
 readonly RESOURCE_UNAVAILABLE=2
+# Exit code of dump-collect when the SPPE could not be recovered by hreset and
+# the dump was collected with direct access in the boot failure layout. Must
+# match EXIT_SPPE_UNRECOVERABLE in sbe_dump_collector.hpp.
+readonly SPPE_UNRECOVERABLE=3
 
 # Variables
 declare -x dump_type="$OP_DUMP"
@@ -87,6 +91,7 @@ declare -x dump_content_type=""
 declare -x FILE=""
 declare -x boot_failure_path=""
 declare -x sbe_subtype=""
+declare -x bootfail_packaging=""
 declare -x mpipl_src=""
 
 #Source opdreport common functions
@@ -161,6 +166,24 @@ function collect_bootfail_dump() {
     return "$SUCCESS"
 }
 
+# @brief Switch the dump entry to BootFailure after an unrecoverable SPPE
+#
+# dump-collect saved a direct access dump in the boot failure layout into
+# plat_dump, so the entry must carry the BootFailure trigger type for the
+# parser to pick the matching format. The dump is packaged regardless of
+# whether the property could be updated.
+function set_bootfailure_trigger_type() {
+    sbe_subtype="BootFailure"
+    bootfail_packaging="$TRUE"
+
+    if ! busctl set-property xyz.openbmc_project.Dump.Manager \
+        "/xyz/openbmc_project/dump/system/entry/$dump_id" \
+        com.ibm.Dump.Entry.SBE SBEDumpTriggerType s \
+        "com.ibm.Dump.Create.SBEDumpTriggerType.BootFailure"; then
+        echo "$($TIME_STAMP)" "Warning: Failed to set SBEDumpTriggerType to BootFailure"
+    fi
+}
+
 # @brief Collect the dump
 function collect() {
     content_path="/tmp/dump_${dump_id}_${EPOCHTIME}"
@@ -184,6 +207,14 @@ function collect() {
             dump-collect --type "$dump_sbe_type" --id "0x$dump_id" \
                 --failingunit "$failing_unit" --path "$dump_outpath"
         fi
+        local collect_rc=$?
+
+        if [ "$collect_rc" -eq "$SPPE_UNRECOVERABLE" ]; then
+            echo "SPPE unrecoverable: packaging direct access dump as BootFailure"
+            set_bootfailure_trigger_type
+            return "$SUCCESS"
+        fi
+        return "$collect_rc"
     fi
 }
 
@@ -202,7 +233,8 @@ function package() {
     elog_id=$eid
 
     # For boot-failure dumps, include all files
-    if [ "$sbe_subtype" == "BootFailure" ] && [ -n "$boot_failure_path" ]; then
+    if [ "$sbe_subtype" == "BootFailure" ] && \
+        { [ -n "$boot_failure_path" ] || [ -n "$bootfail_packaging" ]; }; then
         # Boot-failure: tar all files in plat_dump
         if ! tar -cvzf "$name" plat_dump/* info.yaml; then
             echo "$($TIME_STAMP)" "Could not create the compressed tar file"

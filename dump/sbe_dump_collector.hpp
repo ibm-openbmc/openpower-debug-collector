@@ -14,10 +14,32 @@
 #include <future>
 #include <map>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 namespace openpower::dump::sbe_chipop
 {
+
+/**
+ * @brief Exit code of dump-collect when the SPPE could not be recovered by
+ * hreset and the dump was collected with direct access.
+ *
+ * The dump files in the output path use the boot failure layout, so opdreport
+ * must package them as a BootFailure dump. Must match SPPE_UNRECOVERABLE in
+ * opdreport.
+ */
+constexpr int EXIT_SPPE_UNRECOVERABLE = 3;
+
+/**
+ * @brief Thrown when the SPPE could not be recovered by hreset but a direct
+ * access dump was collected into the output path. The PEL for the failure is
+ * already published.
+ */
+class SppeUnrecoverableError : public std::runtime_error
+{
+  public:
+    using std::runtime_error::runtime_error;
+};
 
 // Use abstraction layer's TargetHandle type
 using TargetMap = std::map<phal::targeting::TargetHandle,

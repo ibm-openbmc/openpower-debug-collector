@@ -82,6 +82,14 @@ int main(int argc, char** argv)
         dumpCollector.collectDump(type, id, failingUnitId, pathStr,
                                   triggerType);
     }
+    catch (const SppeUnrecoverableError& e)
+    {
+        // The SPPE could not be recovered; the direct access dump is in the
+        // boot failure layout. Tell opdreport so it packages it as such.
+        std::cerr << "SPPE unrecoverable, direct access dump collected: "
+                  << e.what() << std::endl;
+        std::exit(EXIT_SPPE_UNRECOVERABLE);
+    }
     catch (const std::exception& e)
     {
         std::cerr << "Failed to collect dump: " << e.what() << std::endl;
