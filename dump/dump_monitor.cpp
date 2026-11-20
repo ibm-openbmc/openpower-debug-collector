@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <regex>
 #include <system_error>
 #include <vector>
@@ -37,15 +38,27 @@ constexpr std::string_view TRIGGER_TIMEOUT = "Timeout";
 constexpr auto dumpOutPath = "/var/lib/phosphor-debug-collector/opdump";
 constexpr auto dumpStatusFailed =
     "xyz.openbmc_project.Common.Progress.OperationStatus.Failed";
-// This path must match PLDM's system dump transfer destination.
-constexpr auto TEMPORARY_SYSTEM_DUMP_FOLDER =
-    "/var/lib/phosphor-debug-collector/tmp";
 constexpr auto dumpManagerService = "xyz.openbmc_project.Dump.Manager";
-constexpr auto dumpEntryRoot = "/xyz/openbmc_project/dump/system/entry";
+// Offset within the raw staging file at which the 7-byte dump type tag
+// begins (PAPR FILE Directory "Dump File Name" field, layout per
+// gendumpheader):
+//   0x00  "FILE    "  (8 B)
+//   0x08  length      (2 B)
+//   0x0A  reserved    (6 B)
+//   0x10  flags       (4 B)
+//   0x14  entry type  (2 B)
+//   0x16  name prefix (2 B)
+//   0x18  dump name → first 7 bytes are the type tag ("SYSDUMP" or "RSCDUMP")
+constexpr std::size_t DUMP_TYPE_TAG_OFFSET = 0x18;
+constexpr std::size_t DUMP_TYPE_TAG_LEN = 7;
 constexpr auto objectMapperService = "xyz.openbmc_project.ObjectMapper";
 constexpr auto objectMapperPath = "/xyz/openbmc_project/object_mapper";
 constexpr auto objectMapperInterface = "xyz.openbmc_project.ObjectMapper";
 constexpr auto propertiesInterface = "org.freedesktop.DBus.Properties";
+constexpr auto createDumpInterface = "xyz.openbmc_project.Dump.Create";
+constexpr auto deleteInterface = "xyz.openbmc_project.Object.Delete";
+// Timeout for calls to the dump manager (30 seconds)
+constexpr uint64_t dbusCallTimeoutUs = 30ULL * 1000 * 1000;
 // This event only means that the writer closed the file. It does not prove
 // that the transfer completed successfully.
 constexpr uint32_t newSystemDumpEvents = IN_CLOSE_WRITE;
@@ -98,12 +111,12 @@ int DumpMonitor::run()
 void DumpMonitor::setupInotifyWatch()
 {
     std::error_code ec;
-    std::filesystem::create_directories(TEMPORARY_SYSTEM_DUMP_FOLDER, ec);
+    std::filesystem::create_directories(SYSTEM_DUMP_STAGING_PATH, ec);
     if (ec)
     {
         lg2::error("Failed to create system dump watch directory {PATH}: "
                    "{ERROR}",
-                   "PATH", TEMPORARY_SYSTEM_DUMP_FOLDER, "ERROR", ec.message());
+                   "PATH", SYSTEM_DUMP_STAGING_PATH, "ERROR", ec.message());
         throw std::system_error(ec, "Failed to create system dump directory");
     }
 
@@ -118,7 +131,7 @@ void DumpMonitor::setupInotifyWatch()
     }
 
     inotifyWatchDescriptor = inotify_add_watch(
-        inotifyFd, TEMPORARY_SYSTEM_DUMP_FOLDER, newSystemDumpEvents);
+        inotifyFd, SYSTEM_DUMP_STAGING_PATH, newSystemDumpEvents);
     if (inotifyWatchDescriptor < 0)
     {
         auto error = errno;
@@ -126,7 +139,7 @@ void DumpMonitor::setupInotifyWatch()
         inotifyFd = -1;
         lg2::error("Failed to watch system dump directory {PATH}, errno: "
                    "{ERRNO}",
-                   "PATH", TEMPORARY_SYSTEM_DUMP_FOLDER, "ERRNO", error);
+                   "PATH", SYSTEM_DUMP_STAGING_PATH, "ERRNO", error);
         throw std::system_error(error, std::generic_category(),
                                 "Failed to add inotify watch");
     }
@@ -203,29 +216,18 @@ int DumpMonitor::inotifyCallback(sd_event_source*, int fd, uint32_t revents,
                      (inotifyEvent->mask & IN_ISDIR) == 0U &&
                      (inotifyEvent->mask & newSystemDumpEvents) != 0U)
             {
-                // Skip files that are already packaged SYSDUMP files —
-                // these are the finished dumps, not the raw Hostboot file.
                 std::string fileName(inotifyEvent->name);
-                if (fileName.rfind("SYSDUMP.", 0) == 0)
+                std::filesystem::path filePath =
+                    std::filesystem::path(SYSTEM_DUMP_STAGING_PATH) / fileName;
+                try
                 {
-                    lg2::info("inotifyCallback: ignoring SYSDUMP file {NAME}",
-                              "NAME", fileName);
+                    monitor->handleDumpFile(filePath);
                 }
-                else
+                catch (const std::exception& e)
                 {
-                    try
-                    {
-                        monitor->handleSystemDumpFile(
-                            std::filesystem::path(
-                                TEMPORARY_SYSTEM_DUMP_FOLDER) /
-                            fileName);
-                    }
-                    catch (const std::exception& e)
-                    {
-                        // Never allow an exception to cross the C callback.
-                        lg2::error("Failed to handle inotify event: {ERROR}",
-                                   "ERROR", e);
-                    }
+                    // Never allow an exception to cross the C callback.
+                    lg2::error("Failed to handle inotify event: {ERROR}",
+                               "ERROR", e);
                 }
             }
 
@@ -236,14 +238,91 @@ int DumpMonitor::inotifyCallback(sd_event_source*, int fd, uint32_t revents,
     return 0;
 }
 
-void DumpMonitor::handleSystemDumpFile(const std::filesystem::path& filePath)
+std::string DumpMonitor::readDumpTypeTag(const std::filesystem::path& filePath)
 {
-    auto dumpEntry = findInProgressSystemDump();
+    // The PAPR FILE Directory "Dump File Name" field starts at offset 0x18.
+    // The first DUMP_TYPE_TAG_LEN (7) bytes are the type tag: "SYSDUMP" or
+    // "RSCDUMP".  Reading just these bytes avoids loading the full file.
+    std::ifstream file(filePath, std::ios::binary);
+    if (!file)
+    {
+        lg2::error("readDumpTypeTag: cannot open {FILE}", "FILE", filePath);
+        return {};
+    }
+    file.seekg(static_cast<std::streamoff>(DUMP_TYPE_TAG_OFFSET));
+    if (!file)
+    {
+        lg2::error("readDumpTypeTag: seek failed for {FILE}", "FILE", filePath);
+        return {};
+    }
+    std::string tag(DUMP_TYPE_TAG_LEN, '\0');
+    file.read(tag.data(), static_cast<std::streamsize>(DUMP_TYPE_TAG_LEN));
+    if (file.gcount() != static_cast<std::streamsize>(DUMP_TYPE_TAG_LEN))
+    {
+        lg2::error("readDumpTypeTag: short read from {FILE}", "FILE", filePath);
+        return {};
+    }
+    return tag;
+}
+
+void DumpMonitor::handleDumpFile(const std::filesystem::path& filePath)
+{
+    using namespace sdbusplus::common::xyz::openbmc_project::dump::entry;
+    using namespace sdbusplus::common::com::ibm::dump::entry;
+
+    // Read the 7-byte type tag from the raw file header to determine
+    // which D-Bus entry type to correlate against.
+    std::string typeTag = readDumpTypeTag(filePath);
+
+    std::string dumpInterface;
+    bool isResource = false;
+
+    if (typeTag == "SYSDUMP")
+    {
+        lg2::info("handleDumpFile: SYSDUMP file {FILE} — correlating with "
+                  "system dump entry",
+                  "FILE", filePath);
+        dumpInterface = System::interface;
+    }
+    else if (typeTag == "RSCDUMP")
+    {
+        lg2::info("handleDumpFile: RSCDUMP file {FILE} — correlating with "
+                  "resource dump entry",
+                  "FILE", filePath);
+        dumpInterface = Resource::interface;
+        isResource = true;
+    }
+    else
+    {
+        lg2::error("handleDumpFile: unrecognised dump type tag '{TAG}' in "
+                   "{FILE} — ignoring",
+                   "TAG", typeTag, "FILE", filePath);
+        return;
+    }
+
+    // The dump manager serves System and Resource entries under the same
+    // object tree, so one root is searched and the interface tells the two
+    // types apart.
+    auto dumpEntry = findInProgressDump(SYSTEM_DUMP_ENTRY_BASE, dumpInterface);
+
+    // No dump was requested for this file, so create a NotStarted entry for it.
+    // A NotStarted entry never triggers an MPIPL reboot, handleDBusSignal only
+    // acts on InProgress entries.
+    bool createdByMonitor = false;
     if (!dumpEntry)
     {
-        lg2::error("No in-progress system dump entry found for new file {FILE}",
-                   "FILE", filePath);
-        return;
+        lg2::info("handleDumpFile: no in-progress {TYPE} dump entry for "
+                  "{FILE}, creating a NotStarted entry",
+                  "TYPE", typeTag, "FILE", filePath);
+        dumpEntry = createNotStartedDump(isResource);
+        if (!dumpEntry)
+        {
+            lg2::error("handleDumpFile: could not create a {TYPE} dump entry "
+                       "for file {FILE}",
+                       "TYPE", typeTag, "FILE", filePath);
+            return;
+        }
+        createdByMonitor = true;
     }
 
     // Extract the 8-char hex dump id from the last component of the entry path
@@ -251,19 +330,18 @@ void DumpMonitor::handleSystemDumpFile(const std::filesystem::path& filePath)
     std::filesystem::path entryPath(*dumpEntry);
     std::string dumpIdStr = entryPath.filename().string();
 
-    lg2::info(
-        "handleSystemDumpFile: raw dump file {FILE}; packaging as entry {ID}",
-        "FILE", filePath, "ID", dumpIdStr);
+    lg2::info("handleDumpFile: raw dump file {FILE}; packaging as entry {ID}",
+              "FILE", filePath, "ID", dumpIdStr);
 
-    // Fork opdreport --mpipl-src to package the raw dump.
+    // Fork opdreport --staged-src to package the raw dump.
     // The event loop remains running in the parent — D-Bus signals and
     // future inotify events continue to be dispatched normally.
     // phosphor-dump-manager's inotify watch on opdump/ fires when
     // opdreport writes the final file, calling updateEntry() to complete
     // the dump entry.
     std::vector<std::string> args = {
-        "opdreport",         "-i",          dumpIdStr,         "-d",
-        MPIPL_DUMP_OUT_PATH, "--mpipl-src", filePath.string(),
+        "opdreport",          "-i",           dumpIdStr,         "-d",
+        SYSTEM_DUMP_OUT_PATH, "--staged-src", filePath.string(),
     };
     std::vector<char*> argv;
     argv.reserve(args.size() + 1);
@@ -273,56 +351,133 @@ void DumpMonitor::handleSystemDumpFile(const std::filesystem::path& filePath)
     }
     argv.push_back(nullptr);
 
+    bool packaged = false;
     pid_t pid = fork();
     if (pid < 0)
     {
-        lg2::error("handleSystemDumpFile: fork failed, errno={ERR}", "ERR",
-                   errno);
-        return;
+        lg2::error("handleDumpFile: fork failed, errno={ERR}", "ERR", errno);
     }
-    if (pid == 0)
+    else if (pid == 0)
     {
         execvp("opdreport", argv.data());
         _exit(EXIT_FAILURE);
     }
-
-    // Parent: reap child.  This is inside openpower-dump-monitor, a
-    // separate process from phosphor-dump-manager, so waitpid() here
-    // never blocks the dump manager's sd-event loop.
-    int wstatus = 0;
-    waitpid(pid, &wstatus, 0);
-    if (WIFEXITED(wstatus) && WEXITSTATUS(wstatus) != 0)
-    {
-        lg2::error("handleSystemDumpFile: opdreport exited {STATUS} for {FILE}",
-                   "STATUS", WEXITSTATUS(wstatus), "FILE", filePath);
-    }
     else
     {
-        lg2::info("handleSystemDumpFile: opdreport completed successfully");
+        // Parent: reap child.
+        int wstatus = 0;
+        waitpid(pid, &wstatus, 0);
+        packaged = WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0;
+        if (packaged)
+        {
+            lg2::info("handleDumpFile: opdreport completed successfully");
+        }
+        else
+        {
+            lg2::error("handleDumpFile: opdreport failed, wait status "
+                       "{STATUS} for {FILE}",
+                       "STATUS", wstatus, "FILE", filePath);
+        }
+    }
+
+    // An entry created here has no other owner, so a dump that could not be
+    // packaged must not stay behind as a NotStarted entry without a file.
+    if (!packaged && createdByMonitor)
+    {
+        deleteDumpEntry(*dumpEntry);
     }
 }
 
-std::optional<std::string> DumpMonitor::findInProgressSystemDump()
+std::optional<std::string> DumpMonitor::createNotStartedDump(bool isResource)
+{
+    using OpCreate = sdbusplus::common::com::ibm::dump::Create;
+    using Progress = sdbusplus::common::xyz::openbmc_project::common::Progress;
+
+    try
+    {
+        // Parameters are keyed and valued as the dump manager expects them
+        std::map<std::string, std::variant<std::string, uint64_t>> params;
+        params[OpCreate::convertCreateParametersToString(
+            OpCreate::CreateParameters::DumpType)] =
+            OpCreate::convertDumpTypeToString(
+                isResource ? OpCreate::DumpType::Resource
+                           : OpCreate::DumpType::System);
+        params[OpCreate::convertCreateParametersToString(
+            OpCreate::CreateParameters::OperationStatus)] =
+            Progress::convertOperationStatusToString(
+                Progress::OperationStatus::NotStarted);
+
+        // The manager object is the parent of the system entry root. The
+        // dump manager creates both System and Resource entries on it.
+        auto managerPath =
+            std::filesystem::path(SYSTEM_DUMP_ENTRY_BASE).parent_path();
+        auto method =
+            bus.new_method_call(dumpManagerService, managerPath.c_str(),
+                                createDumpInterface, "CreateDump");
+        method.append(params);
+        auto reply = bus.call(method, dbusCallTimeoutUs);
+
+        sdbusplus::message::object_path entryPath;
+        reply.read(entryPath);
+        return entryPath.str;
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Failed to create a NotStarted dump entry: {ERROR}", "ERROR",
+                   e);
+    }
+    return std::nullopt;
+}
+
+void DumpMonitor::deleteDumpEntry(const std::string& path)
+{
+    try
+    {
+        auto method = bus.new_method_call(dumpManagerService, path.c_str(),
+                                          deleteInterface, "Delete");
+        bus.call_noreply(method, dbusCallTimeoutUs);
+        lg2::info("Deleted dump entry {PATH}", "PATH", path);
+    }
+    catch (const std::exception& e)
+    {
+        lg2::error("Failed to delete dump entry {PATH}: {ERROR}", "PATH", path,
+                   "ERROR", e);
+    }
+}
+
+std::optional<std::string> DumpMonitor::findInProgressDump(
+    const std::string& entryRoot, const std::string& dumpInterface)
 {
     using namespace sdbusplus::common::xyz::openbmc_project::common;
-    using namespace sdbusplus::common::xyz::openbmc_project::dump::entry;
 
-    auto mapperCall =
-        bus.new_method_call(objectMapperService, objectMapperPath,
-                            objectMapperInterface, "GetSubTreePaths");
-    mapperCall.append(dumpEntryRoot, 0,
-                      std::vector<std::string>{System::interface});
+    std::vector<std::string> dumpEntries;
+    try
+    {
+        auto mapperCall =
+            bus.new_method_call(objectMapperService, objectMapperPath,
+                                objectMapperInterface, "GetSubTreePaths");
+        mapperCall.append(entryRoot, 0,
+                          std::vector<std::string>{dumpInterface});
+        auto mapperReply = bus.call(mapperCall);
+        mapperReply.read(dumpEntries);
+    }
+    catch (const std::exception& e)
+    {
+        // ObjectMapper returns an error when no objects exist under the
+        // subtree root — treat as empty.
+        lg2::info("findInProgressDump: mapper query for {ROOT} failed "
+                  "(no entries?): {ERROR}",
+                  "ROOT", entryRoot, "ERROR", e);
+        return std::nullopt;
+    }
 
-    std::vector<std::string> systemDumpEntries;
-    auto mapperReply = bus.call(mapperCall);
-    mapperReply.read(systemDumpEntries);
-    std::sort(systemDumpEntries.begin(), systemDumpEntries.end());
+    std::sort(dumpEntries.begin(), dumpEntries.end());
 
     const auto inProgressStatus = Progress::convertOperationStatusToString(
         Progress::OperationStatus::InProgress);
     std::vector<std::string> inProgressEntries;
 
-    for (const auto& entry : systemDumpEntries)
+    for (const auto& entry : dumpEntries)
     {
         try
         {
@@ -354,10 +509,10 @@ std::optional<std::string> DumpMonitor::findInProgressSystemDump()
 
     if (inProgressEntries.size() > 1)
     {
-        lg2::error("Found {COUNT} in-progress system dump entries; using "
+        lg2::error("Found {COUNT} in-progress {INTF} dump entries; using "
                    "{ENTRY}",
-                   "COUNT", inProgressEntries.size(), "ENTRY",
-                   inProgressEntries.front());
+                   "COUNT", inProgressEntries.size(), "INTF", dumpInterface,
+                   "ENTRY", inProgressEntries.front());
     }
 
     return inProgressEntries.front();
@@ -620,9 +775,9 @@ void DumpMonitor::initiateDumpCollection(const std::string& path,
         }
 
         // Disruptive system dump: trigger MPIPL reboot so the host writes
-        // the raw dump to MPIPL_STAGING_PATH.  The always-on inotify watch
-        // (setupInotifyWatch / inotifyCallback) will detect the file and
-        // call handleSystemDumpFile() without blocking the event loop.
+        // the raw dump to SYSTEM_DUMP_STAGING_PATH.  The always-on inotify
+        // watch (setupInotifyWatch / inotifyCallback) will detect the file and
+        // call handleDumpFile() which reads the header type tag to route it.
         startMpReboot(path);
     }
     else

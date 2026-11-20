@@ -585,12 +585,12 @@ function plat_dump_header() {
 
 
 # ---------------------------------------------------------------------------
-# MPIPL packaging
+# Staged dump (MPIPL system / resource) packaging
 # ---------------------------------------------------------------------------
 
-# @brief Build the final MPIPL dump file with patched PHAL-owned header fields.
+# @brief Build the final staged dump file with patched PHAL-owned header fields.
 #
-# The raw MPIPL file written by Hostboot already contains a 688-byte header
+# The raw staged file written by the host already contains a 688-byte header
 # (PAPR FILE Directory at 0x000 + SYS DUMP Summary at 0x0D0, last PHAL field
 # ends at 0x0D0+0x1C0+32 = 0x2B0 = 688).  PHAL must override specific fields
 # in that header before handing the file to the dump manager.
@@ -613,7 +613,7 @@ function plat_dump_header() {
 #     +0x10  Flags              4 B  zero
 #     +0x14  Entry Type         2 B  0x0001
 #     +0x16  File Name Prefix   2 B  0x000F
-#     +0x18  Dump File Name    40 B  SYSDUMP.<serial>.<id>.<YYYYMMDDhhmmss>
+#     +0x18  Dump File Name    40 B  <SYSDUMP|RSCDUMP>.<serial>.<id>.<YYYYMMDDhhmmss>
 #
 #   SYS DUMP Summary (base 0x0D0 = 208):
 #     +0x008  Dump Request Time  8 B  BCD timestamp
@@ -625,12 +625,15 @@ function plat_dump_header() {
 #     +0x1BC  Originator Type    4 B  ASCII/NUL originator code
 #     +0x1C0  Originator ID     32 B  NUL-padded ASCII originator id
 #
-# @param[in]  src_file  raw MPIPL dump file (not modified)
-# @param[out] out_file  destination for the reassembled dump
+# @param[in]  src_file   raw MPIPL/resource dump file (not modified)
+# @param[out] out_file   destination for the reassembled dump
+# @param[in]  dump_name  value for the Dump File Name field, e.g.
+#                        SYSDUMP.<serial>.<id>.<ts> or RSCDUMP.<serial>.<id>.<ts>
 #
-function build_mpipl_dump_header() {
+function build_staged_dump_header() {
     local src_file="$1"
     local out_file="$2"
+    local file_name="$3"
 
     # The header block is exactly 688 bytes (0x2B0):
     #   SUM(208) + last-field-offset(0x1C0=448) + last-field-width(32) = 688
@@ -639,24 +642,22 @@ function build_mpipl_dump_header() {
     local src_size
     src_size=$(stat -c%s "$src_file")
     if (( src_size < HDR_SIZE )); then
-        echo "build_mpipl_dump_header: file too small ($src_size < $HDR_SIZE)"
+        echo "build_staged_dump_header: file too small ($src_size < $HDR_SIZE)"
         return 1
     fi
 
     local tmp_hdr
-    tmp_hdr=$(mktemp /tmp/mpipl_hdr.XXXXXX)
+    tmp_hdr=$(mktemp /tmp/staged_hdr.XXXXXX)
 
     # Extract the header into the temp file.
     dd if="$src_file" of="$tmp_hdr" bs="$HDR_SIZE" count=1 2>/dev/null
 
     # bmcSerialNo is already set by get_bmc_model_serial_number() which is
-    # called unconditionally from gen_mpipl_package() before reaching here.
+    # called unconditionally from gen_staged_dump_package() before reaching here.
     local bmc_serial="${bmcSerialNo}"
 
     local sysname
     sysname=$(hostname 2>/dev/null || true)
-
-    local file_name="SYSDUMP.${serialNo}.${dump_id}.${dDay}"
 
     # Patch the PHAL-owned fields in the temp header using Python3.
     python3 - "$tmp_hdr" \
@@ -673,7 +674,7 @@ function build_mpipl_dump_header() {
 import sys, struct
 
 hdr_path  = sys.argv[1]
-file_name = sys.argv[2]   # SYSDUMP.<serial>.<id>.<ts>
+file_name = sys.argv[2]   # <SYSDUMP|RSCDUMP>.<serial>.<id>.<ts>
 dday      = sys.argv[3]   # YYYYMMDDhhmmss (14 digits)
 dump_id   = sys.argv[4]   # 8 hex chars e.g. A0000001
 sysname   = sys.argv[5]
@@ -731,7 +732,7 @@ PYEOF
 
     local rc=$?
     if [[ $rc -ne 0 ]]; then
-        echo "build_mpipl_dump_header: Python header patch failed (rc=$rc)"
+        echo "build_staged_dump_header: Python header patch failed (rc=$rc)"
         rm -f "$tmp_hdr"
         return 1
     fi
@@ -747,20 +748,20 @@ PYEOF
     rm -f "$tmp_hdr"
 
     if [[ $rc -ne 0 ]]; then
-        echo "build_mpipl_dump_header: failed to write '$out_file'"
+        echo "build_staged_dump_header: failed to write '$out_file'"
         rm -f "$out_file"
         return 1
     fi
 
-    echo "build_mpipl_dump_header: wrote '$out_file' ($(stat -c%s "$out_file") bytes)"
+    echo "build_staged_dump_header: wrote '$out_file' ($(stat -c%s "$out_file") bytes)"
     return 0
 }
 
-# @brief Package an MPIPL system dump.
+# @brief Package a staged MPIPL system dump or resource dump.
 #
-# Called from gen_mpipl_package() when --mpipl-src is set.  Expects the
+# Called from gen_staged_dump_package() when --staged-src is set.  Expects the
 # following variables to be set by the caller (opdreport):
-#   mpipl_src  — path to the raw Hostboot dump file
+#   staged_src  — path to the raw Hostboot dump file
 #   dump_id    — 8-hex-char dump manager entry id (e.g. A0000001)
 #   dump_dir   — destination base directory (opdump/)
 #   serialNo   — system serial number (set by fetch_serial_number)
@@ -770,9 +771,9 @@ PYEOF
 #
 # The raw staging file is removed after successful packaging.
 #
-function package_mpipl() {
-    if [[ -z "$mpipl_src" || ! -f "$mpipl_src" ]]; then
-        echo "package_mpipl: MPIPL source file not found: '$mpipl_src'"
+function package_staged_dump() {
+    if [[ -z "$staged_src" || ! -f "$staged_src" ]]; then
+        echo "package_staged_dump: staged source file not found: '$staged_src'"
         return 1
     fi
 
@@ -780,41 +781,83 @@ function package_mpipl() {
     fetch_pel_id
     get_originator_details "system"
 
-    local dump_name="SYSDUMP.${serialNo}.${dump_id}.${dDay}"
+    # The raw file's Dump File Name field (offset 0x18) starts with a 7-byte
+    # type tag: SYSDUMP for an MPIPL system dump, RSCDUMP for a resource dump.
+    # Keep that tag as the name prefix; fall back to SYSDUMP if unrecognised.
+    local dump_prefix
+    dump_prefix=$(dd if="$staged_src" bs=1 skip=24 count=7 2>/dev/null)
+    if [[ "$dump_prefix" != "RSCDUMP" ]]; then
+        dump_prefix="SYSDUMP"
+    fi
+
+    # A resource dump is named with the time stamp that the host wrote in the
+    # Dump File Name field of the raw header
+    # (RSCDUMP.<serial>.<host dump id>.<YYYYMMDDhhmmss>).  The dump id in the
+    # name stays the BMC entry id, the dump manager matches the file to its
+    # entry with it.  If the time stamp is missing or malformed, the current
+    # time is used.
+    if [[ "$dump_prefix" == "RSCDUMP" ]]; then
+        local raw_name host_ts
+        raw_name=$(dd if="$staged_src" bs=1 skip=24 count=40 2>/dev/null |
+            tr -d '\000')
+        host_ts="${raw_name##*.}"
+        if [[ "$host_ts" =~ ^[0-9]{14}$ ]]; then
+            dDay="$host_ts"
+        else
+            echo "package_staged_dump: no valid time stamp in raw header" \
+                "name '$raw_name', using current time $dDay"
+        fi
+    fi
+
+    local dump_name="${dump_prefix}.${serialNo}.${dump_id}.${dDay}"
 
     # Create the per-dump subdirectory: opdump/<dump_id>/
     # The dump manager's top-level Watch sees IN_CREATE on this new dir
     # and installs a child Watch(IN_CLOSE_WRITE | IN_MOVED_TO) on it.
     local dest_dir="${dump_dir}/${dump_id}"
     if ! mkdir -p "$dest_dir"; then
-        echo "package_mpipl: could not create destination directory $dest_dir"
-        rm -f "$mpipl_src"
+        echo "package_staged_dump: could not create destination directory $dest_dir"
+        rm -f "$staged_src"
+        rmdir "$dest_dir" 2>/dev/null
         return 1
     fi
 
-    # Build reassembled dump directly into dest_dir.
-    # Writing here triggers IN_CLOSE_WRITE on the child watch →
-    # updateEntry() → entry Completed.
     local out_file="${dest_dir}/${dump_name}"
-    build_mpipl_dump_header "$mpipl_src" "$out_file"
-    local rc=$?
+    local rc
+    if [[ "$dump_prefix" == "RSCDUMP" ]]; then
+        # A resource dump is formatted completely by the host.  Neither its
+        # header nor any of its data may be modified, the staged file is only
+        # renamed into place.  The rename triggers IN_MOVED_TO on the child
+        # watch → updateEntry() → entry Completed.
+        mv -f "$staged_src" "$out_file"
+        rc=$?
+    else
+        # MPIPL system dump: build reassembled dump directly into dest_dir.
+        # Writing here triggers IN_CLOSE_WRITE on the child watch →
+        # updateEntry() → entry Completed.
+        build_staged_dump_header "$staged_src" "$out_file" "$dump_name"
+        rc=$?
+    fi
 
-    rm -f "$mpipl_src"
+    rm -f "$staged_src"
 
     if [[ $rc -ne 0 ]]; then
-        echo "package_mpipl: build_mpipl_dump_header failed rc=$rc"
+        echo "package_staged_dump: packaging $dump_prefix failed rc=$rc"
         rm -f "$out_file"
+        # Do not leave an empty dump directory behind; rmdir only removes an
+        # empty directory so nothing else can be lost.
+        rmdir "$dest_dir" 2>/dev/null
         return 1
     fi
 
-    echo "MPIPL dump packaged: $out_file"
+    echo "Staged dump packaged: $out_file"
     return 0
 }
 
-# @brief Entry point called by gendumpheader for MPIPL dumps.
-function gen_mpipl_package() {
+# @brief Entry point called by gendumpheader for staged (MPIPL/resource) dumps.
+function gen_staged_dump_package() {
     get_bmc_model_serial_number
-    package_mpipl
+    package_staged_dump
 }
 
 #main function
@@ -834,10 +877,10 @@ function gen_header_package() {
 
 get_bmc_model_serial_number
 
-# Route to MPIPL packaging when --mpipl-src is set, otherwise run the
+# Route to staged dump packaging when --staged-src is set, otherwise run the
 # standard header generation path.
-if [[ -n "$mpipl_src" ]]; then
-    gen_mpipl_package
+if [[ -n "$staged_src" ]]; then
+    gen_staged_dump_package
 else
     gen_header_package
 fi

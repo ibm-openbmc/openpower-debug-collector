@@ -5,6 +5,8 @@
 
 #include <systemd/sd-event.h>
 
+#include <com/ibm/Dump/Create/common.hpp>
+#include <com/ibm/Dump/Entry/Resource/common.hpp>
 #include <sdbusplus/bus.hpp>
 #include <sdbusplus/bus/match.hpp>
 #include <xyz/openbmc_project/Common/Progress/common.hpp>
@@ -25,13 +27,17 @@ namespace openpower::dump
 using PropertyMap = std::map<std::string, std::variant<uint32_t, std::string>>;
 using InterfaceMap = std::map<std::string, PropertyMap>;
 
-/** Path where the Hostboot/MPIPL agent writes the raw dump file. */
-constexpr auto MPIPL_STAGING_PATH = "/var/lib/phosphor-debug-collector/tmp";
+/** Staging directory where raw MPIPL (SYSDUMP) and resource (RSCDUMP) dump
+ *  files are written.  Must match PLDM's dump transfer destination. */
+constexpr auto SYSTEM_DUMP_STAGING_PATH =
+    "/var/lib/phosphor-debug-collector/tmp";
 
 /** Path where packaged dump directories are placed. */
-constexpr auto MPIPL_DUMP_OUT_PATH = "/var/lib/phosphor-debug-collector/opdump";
+constexpr auto SYSTEM_DUMP_OUT_PATH =
+    "/var/lib/phosphor-debug-collector/opdump";
 
-/** D-Bus base path for system dump entries. */
+/** D-Bus base path of the dump manager's entries. Both System and Resource
+ *  dump entries are created under it. */
 constexpr auto SYSTEM_DUMP_ENTRY_BASE =
     "/xyz/openbmc_project/dump/system/entry";
 
@@ -115,21 +121,57 @@ class DumpMonitor
                                uint32_t revents, void* userdata);
 
     /**
-     * @brief Correlates a new dump file with an in-progress system dump entry
-     *        and forks opdreport --mpipl-src to package it.
-     * @param[in] filePath - Path reported by inotify.
+     * @brief Reads the 7-byte dump type tag from offset 0x18 of the raw
+     *        staging file (PAPR FILE Directory, "Dump File Name" field) and
+     *        returns it as a string, e.g. "RSCDUMP" or "SYSDUMP".
+     *        Returns an empty string on any read error.
+     * @param[in] filePath - Path to the raw staging file.
      */
-    void handleSystemDumpFile(const std::filesystem::path& filePath);
+    static std::string readDumpTypeTag(const std::filesystem::path& filePath);
 
     /**
-     * @brief Finds an in-progress system dump entry via ObjectMapper.
+     * @brief Correlates a raw dump file written into the staging directory
+     *        with an in-progress D-Bus entry and forks opdreport to package it.
+     *        The dump type (System vs Resource) is determined by reading the
+     *        7-byte type tag at offset 0x18 of the file header.
+     * @param[in] filePath - Path reported by inotify.
+     */
+    void handleDumpFile(const std::filesystem::path& filePath);
+
+    /**
+     * @brief Finds an in-progress dump entry of the given type via
+     *        ObjectMapper.
      *
-     * If multiple entries are in progress, logs an error and returns the first
-     * entry in lexical object-path order so that the dump is not discarded.
+     * Queries the subtree rooted at @p entryRoot for objects implementing
+     * @p dumpInterface that are currently InProgress.  If multiple entries
+     * are in progress, logs an error and returns the first in lexical
+     * object-path order so that the dump is not discarded.
      *
+     * @param[in] entryRoot      D-Bus subtree root to search (e.g.
+     *                           "/xyz/openbmc_project/dump/system/entry").
+     * @param[in] dumpInterface  D-Bus interface to filter on (e.g.
+     *                           "xyz.openbmc_project.Dump.Entry.System").
      * @return The selected entry object path, or std::nullopt if none found.
      */
-    std::optional<std::string> findInProgressSystemDump();
+    std::optional<std::string> findInProgressDump(
+        const std::string& entryRoot, const std::string& dumpInterface);
+
+    /**
+     * @brief Asks the dump manager to create an entry in NotStarted state,
+     *        for a raw dump file that no dump request preceded.
+     *
+     * @param[in] isResource - true for a Resource dump, false for System.
+     * @return The object path of the new entry, or std::nullopt on failure.
+     */
+    std::optional<std::string> createNotStartedDump(bool isResource);
+
+    /**
+     * @brief Deletes a dump entry through its Object.Delete interface. Errors
+     *        are logged and not thrown.
+     *
+     * @param[in] path - Object path of the entry.
+     */
+    void deleteDumpEntry(const std::string& path);
 
     /**
      * @brief Checks if the dump creation is in progress.
